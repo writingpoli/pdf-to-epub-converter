@@ -2,6 +2,7 @@ import Foundation
 import PDFToEPUBCore
 #if canImport(AppKit)
 import AppKit
+import PDFKit
 #endif
 
 let usage = """
@@ -16,6 +17,8 @@ usage: pdf2epub <input.pdf> [options]
   --ignore-bookmarks    find chapters from headings even if the PDF has bookmarks
   --open                open the result in Apple Books when done
   --verbose             print every step with the time it started
+  --dump-lines <file>   save the text lines read from the PDF as JSON (for
+                        diagnosing layout problems) instead of converting
 
 """
 
@@ -35,6 +38,7 @@ var keepHeaders = false
 var ignoreBookmarks = false
 var openInBooks = false
 var verbose = false
+var dumpLines: String?
 var linesJSON: String?   // debugging aid: run layout on lines dumped by another tool
 
 while !arguments.isEmpty {
@@ -53,6 +57,7 @@ while !arguments.isEmpty {
     case "--ignore-bookmarks": ignoreBookmarks = true
     case "--open": openInBooks = true
     case "--verbose": verbose = true
+    case "--dump-lines": dumpLines = value()
     case "--lines-json": linesJSON = value()
     case "-h", "--help":
         print(usage)
@@ -67,8 +72,8 @@ var layout = LayoutOptions()
 layout.removeHeadersAndFooters = !keepHeaders
 layout.useOutline = !ignoreBookmarks
 
-/// Input format for --lines-json.
-struct LinesDump: Decodable {
+/// Format of --dump-lines output and --lines-json input.
+struct LinesDump: Codable {
     var lines: [TextLine]
     var outline: [OutlineEntry]?
     var title: String?
@@ -107,6 +112,22 @@ options.author = author
 options.includeCover = includeCover
 options.extraction.recognizeScannedPages = ocr
 options.layout = layout
+
+if let dumpLines {
+    do {
+        guard let document = PDFDocument(url: inputURL) else { fail("couldn't open \(input)") }
+        let extracted = try PDFExtractor(document: document).extract(options: options.extraction)
+        let dump = LinesDump(lines: extracted.lines, outline: extracted.outline,
+                             title: extracted.title, author: extracted.author)
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        try encoder.encode(dump).write(to: URL(fileURLWithPath: dumpLines))
+        print("Wrote \(extracted.lines.count) lines from \(extracted.pageCount) pages to \(dumpLines)")
+    } catch {
+        fail(error.localizedDescription)
+    }
+    exit(0)
+}
 
 let isTerminal = isatty(fileno(stderr)) != 0
 do {

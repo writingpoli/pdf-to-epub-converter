@@ -14,6 +14,19 @@ jobs:
       - name: Build
         run: swift build
 
+      - name: Show what PDFKit reads from the note pages
+        run: |
+          swift run pdf2epub Tests/Fixtures/alice-sample.pdf --dump-lines lines.json
+          python3 - <<'PY'
+          import json
+          lines = json.load(open("lines.json"))["lines"]
+          for l in lines:
+              text = "".join(r["text"] for r in l["runs"])
+              if l["page"] in (3, 7, 11) or "Liddell" in text or any(r.get("superscript") for r in l["runs"]):
+                  runs = [(r["text"][-12:], "sup" if r.get("superscript") else "") for r in l["runs"]]
+                  print(l["page"], round(l["y"], 1), round(l["fontSize"], 1), round(l["x"], 1), round(l["width"], 1), runs[-3:])
+          PY
+
       - name: Test
         run: swift test
 

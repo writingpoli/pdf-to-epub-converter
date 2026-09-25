@@ -118,6 +118,21 @@ public struct LayoutAnalyzer {
             }
             var merged: [TextLine] = []
             for line in pageLines {
+                // A note number set small and raised often comes out as its own sliver.
+                if var last = merged.last, Self.isRaisedMarker(line, beside: last) {
+                    last.runs += line.runs.map { run in var run = run; run.superscript = true; return run }
+                    last.width = max(last.maxX, line.maxX) - last.x
+                    merged[merged.count - 1] = last
+                    continue
+                }
+                if let last = merged.last, Self.isRaisedMarker(last, beside: line) {
+                    var line = line
+                    line.runs = last.runs.map { run in var run = run; run.superscript = true; return run } + line.runs
+                    line.width = line.maxX - last.x
+                    line.x = last.x
+                    merged[merged.count - 1] = line
+                    continue
+                }
                 if var last = merged.last {
                     let centerA = last.y + last.height / 2
                     let centerB = line.y + line.height / 2
@@ -144,6 +159,17 @@ public struct LayoutAnalyzer {
             result.append(contentsOf: merged)
         }
         return result
+    }
+
+    /// Whether `marker` is a note number or symbol set smaller than `text`,
+    /// on the same line and right next to it.
+    static func isRaisedMarker(_ marker: TextLine, beside text: TextLine) -> Bool {
+        guard marker.page == text.page, marker.fontSize <= text.fontSize * 0.85,
+              marker.y >= text.y - marker.height, marker.y < text.maxY - text.height * 0.3 else { return false }
+        let gap = marker.x >= text.maxX - 1 ? marker.x - text.maxX : text.x - marker.maxX
+        guard gap > -text.fontSize * 0.5, gap < text.fontSize * 1.2 else { return false }
+        let t = marker.text.trimmingCharacters(in: .whitespaces)
+        return t.count <= 3 && (t.allSatisfy(\.isNumber) || t.allSatisfy { "*†‡§¶".contains($0) })
     }
 
     /// The font size most of the characters in the book are set in.

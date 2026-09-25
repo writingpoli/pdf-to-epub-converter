@@ -115,7 +115,10 @@ public final class PDFExtractor {
                     let text = (attributed.string as NSString).substring(with: range)
                     let font = attrs[.font] as? NSFont
                     let traits = Self.traits(of: font)
-                    runs.append(TextRun(text: text, bold: traits.bold, italic: traits.italic))
+                    let raised = (attrs[NSAttributedString.Key("NSSuperScript")] as? Int ?? 0) > 0
+                        || (attrs[.baselineOffset] as? Double ?? 0) > 0.5
+                    runs.append(TextRun(text: text, bold: traits.bold, italic: traits.italic,
+                                        superscript: raised && Self.isMarkerText(text)))
                     runSizes.append(font.map { Double($0.pointSize) })
                     if let font, font.pointSize > 1 {
                         let letters = text.filter { !$0.isWhitespace }.count
@@ -134,11 +137,7 @@ public final class PDFExtractor {
             // Note references: numbers or symbols set noticeably smaller than the line.
             for i in runs.indices where i < runSizes.count {
                 guard let size = runSizes[i], size < fontSize * 0.8 else { continue }
-                let marker = runs[i].text.trimmingCharacters(in: .whitespaces)
-                if !marker.isEmpty, marker.count <= 3,
-                   marker.allSatisfy({ $0.isNumber }) || marker.allSatisfy({ "*†‡§¶".contains($0) }) {
-                    runs[i].superscript = true
-                }
+                if Self.isMarkerText(runs[i].text) { runs[i].superscript = true }
             }
 
             lines.append(TextLine(runs: runs, page: index,
@@ -203,6 +202,12 @@ public final class PDFExtractor {
         guard pointY != kPDFDestinationUnspecifiedValue, pointY.isFinite,
               pointY >= box.minY - 1, pointY <= box.maxY + 1 else { return nil }
         return Double(box.maxY - pointY)
+    }
+
+    /// A note number or symbol: "3", "12", "*", "†".
+    static func isMarkerText(_ text: String) -> Bool {
+        let t = text.trimmingCharacters(in: .whitespaces)
+        return !t.isEmpty && t.count <= 3 && (t.allSatisfy(\.isNumber) || t.allSatisfy { "*†‡§¶".contains($0) })
     }
 
     static func traits(of font: NSFont?) -> (bold: Bool, italic: Bool) {

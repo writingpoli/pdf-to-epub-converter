@@ -88,6 +88,31 @@ final class LinkTests: XCTestCase {
         assertLinksResolve(chapters)
     }
 
+    /// PDF readers can hand back a raised note number as its own small line.
+    func testRaisedMarkerSliverBecomesANoteReference() {
+        var lines: [TextLine] = []
+        for i in 0..<6 {
+            lines.append(line("Body line \(i) of the page, with plenty of words to fill", page: 0,
+                              y: 60 + Double(i) * 14, x: i == 0 ? 66 : 50, width: i == 3 ? 300 : 320))
+        }
+        // "1" sits just after line 3, a little higher and smaller.
+        lines.append(TextLine(runs: [TextRun(text: "1")], page: 0, x: 351, y: 60 + 3 * 14 - 2.5, width: 4,
+                              height: 8, fontSize: 7, pageWidth: 420, pageHeight: 595))
+        lines.append(line("1 The note itself.", page: 0, y: 520, width: 120, size: 9))
+
+        let chapters = LayoutAnalyzer().analyze(lines: lines)
+        let refs = allRuns(chapters).filter(\.superscript)
+        XCTAssertEqual(refs.map(\.text), ["1"])
+        XCTAssertEqual(refs.first?.link, .anchor("fn1-1"))
+        let paragraphs = chapters.flatMap(\.blocks).compactMap { b -> String? in
+            if case .paragraph(let runs, _) = b { return runs.joinedText } else { return nil }
+        }
+        XCTAssertEqual(paragraphs.count, 1, "\(paragraphs)")
+        XCTAssertTrue(paragraphs[0].contains("line 3 of the page, with plenty of words to fill1 Body line 4"),
+                      paragraphs[0])
+        assertLinksResolve(chapters)
+    }
+
     func testContentsPageLinksToChapters() {
         var lines: [TextLine] = [
             line("Contents", page: 0, y: 60, x: 170, width: 80, size: 16),
