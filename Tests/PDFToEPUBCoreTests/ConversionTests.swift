@@ -59,6 +59,16 @@ final class ConversionTests: XCTestCase {
                                                         "CHAPTER III. A Caucus-Race and a Long Tale"])
     }
 
+    /// Layout tools often share one resource list between every page and every
+    /// embedded graphic. Checking it for pictures used to take minutes per page.
+    func testSharedResourcesDoNotStall() throws {
+        let started = Date()
+        let (result, text, _) = try convert("shared-resources.pdf")
+        XCTAssertLessThan(Date().timeIntervalSince(started), 15)
+        XCTAssertEqual(result.pageCount, 3)
+        XCTAssertTrue(text.contains("shares its resources"), text)
+    }
+
     func testTitleAndAuthorOverrides() throws {
         let (_, text, _) = try convert("alice-sample.pdf") { options in
             options.title = "My Title"

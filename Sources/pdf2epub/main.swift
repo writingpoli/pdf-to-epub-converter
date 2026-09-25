@@ -15,6 +15,7 @@ usage: pdf2epub <input.pdf> [options]
   --keep-headers        keep running heads and page numbers
   --ignore-bookmarks    find chapters from headings even if the PDF has bookmarks
   --open                open the result in Apple Books when done
+  --verbose             print every step with the time it started
 
 """
 
@@ -33,6 +34,7 @@ var ocr = true
 var keepHeaders = false
 var ignoreBookmarks = false
 var openInBooks = false
+var verbose = false
 var linesJSON: String?   // debugging aid: run layout on lines dumped by another tool
 
 while !arguments.isEmpty {
@@ -50,6 +52,7 @@ while !arguments.isEmpty {
     case "--keep-headers": keepHeaders = true
     case "--ignore-bookmarks": ignoreBookmarks = true
     case "--open": openInBooks = true
+    case "--verbose": verbose = true
     case "--lines-json": linesJSON = value()
     case "-h", "--help":
         print(usage)
@@ -108,7 +111,16 @@ options.layout = layout
 let isTerminal = isatty(fileno(stderr)) != 0
 do {
     var lastReported = -1
+    var lastMessage = ""
+    let started = Date()
     let result = try PDFToEPUBConverter.convert(input: inputURL, output: outputURL, options: options) { fraction, message in
+        if verbose {
+            guard message != lastMessage else { return }
+            lastMessage = message
+            let elapsed = String(format: "%7.2fs", Date().timeIntervalSince(started))
+            FileHandle.standardError.write(Data("\(elapsed)  \(message)\n".utf8))
+            return
+        }
         let percent = Int(fraction * 100)
         guard percent != lastReported else { return }
         lastReported = percent
@@ -116,7 +128,7 @@ do {
             FileHandle.standardError.write(Data("\r\u{1B}[K\(percent)%  \(message)".utf8))
         }
     }
-    if isTerminal { FileHandle.standardError.write(Data("\r\u{1B}[K".utf8)) }
+    if isTerminal && !verbose { FileHandle.standardError.write(Data("\r\u{1B}[K".utf8)) }
     print("Wrote \(result.outputURL.path)")
     print("  \(result.pageCount) pages → \(result.chapterTitles.count) chapters, about \(result.wordCount) words")
     if result.recognizedPageCount > 0 { print("  \(result.recognizedPageCount) scanned pages read with text recognition") }

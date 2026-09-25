@@ -55,7 +55,7 @@ public final class PDFExtractor {
                 guard let page = document.page(at: index) else { return }
                 var lines = textLines(on: page, index: index)
                 let characters = lines.reduce(0) { $0 + $1.text.count }
-                let hasPictures = Self.hasSizableImages(page)
+                let hasPictures = hasSizableImages(page)
 
                 if characters < 20 {
                     if options.recognizeScannedPages && (hasPictures || characters == 0) {
@@ -216,17 +216,31 @@ public final class PDFExtractor {
 
     /// Whether the page draws a raster image big enough to matter (a scan, a
     /// photo, a plate), as opposed to having none or only tiny ornaments.
-    static func hasSizableImages(_ page: PDFPage) -> Bool {
+    ///
+    /// Many PDFs share one resource dictionary between every page and every
+    /// embedded graphic, so each XObject dictionary is examined once per
+    /// document and the answer cached. Walking it afresh from every graphic
+    /// that refers back to it grows as the cube of its size and can hang.
+    func hasSizableImages(_ page: PDFPage) -> Bool {
         guard let dictionary = page.pageRef?.dictionary else { return false }
-        return containsSizableImage(resourcesOf: dictionary, depth: 0)
+        var visiting = Set<OpaquePointer>()
+        return containsSizableImage(resourcesOf: dictionary, depth: 0, visiting: &visiting)
     }
 
-    private static func containsSizableImage(resourcesOf dictionary: CGPDFDictionaryRef, depth: Int) -> Bool {
+    private var xObjectCache: [OpaquePointer: Bool] = [:]
+
+    private func containsSizableImage(resourcesOf dictionary: CGPDFDictionaryRef, depth: Int,
+                                      visiting: inout Set<OpaquePointer>) -> Bool {
         var resources: CGPDFDictionaryRef?
         guard CGPDFDictionaryGetDictionary(dictionary, "Resources", &resources), let resources else { return false }
         var xObjects: CGPDFDictionaryRef?
         guard CGPDFDictionaryGetDictionary(resources, "XObject", &xObjects), let xObjects else { return false }
+        if let cached = xObjectCache[xObjects] { return cached }
+        guard depth < 3, visiting.insert(xObjects).inserted else { return false }
+        defer { visiting.remove(xObjects) }
+
         var found = false
+        var forms: [CGPDFDictionaryRef] = []
         CGPDFDictionaryApplyBlock(xObjects, { _, object, _ in
             var stream: CGPDFStreamRef?
             guard CGPDFObjectGetValue(object, .stream, &stream), let stream,
@@ -240,13 +254,21 @@ public final class PDFExtractor {
                 CGPDFDictionaryGetInteger(streamDictionary, "Width", &width)
                 CGPDFDictionaryGetInteger(streamDictionary, "Height", &height)
                 if width >= 150 && height >= 150 { found = true }
-            case "Form" where depth < 2:
-                if containsSizableImage(resourcesOf: streamDictionary, depth: depth + 1) { found = true }
+            case "Form":
+                forms.append(streamDictionary)
             default:
                 break
             }
             return !found
         }, nil)
+
+        if !found {
+            for form in forms where containsSizableImage(resourcesOf: form, depth: depth + 1, visiting: &visiting) {
+                found = true
+                break
+            }
+        }
+        xObjectCache[xObjects] = found
         return found
     }
 
