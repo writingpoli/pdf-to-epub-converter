@@ -1,0 +1,55 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  macos:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build
+        run: swift build
+
+      - name: Test
+        run: swift test
+
+      - name: Build the app
+        run: scripts/build-app.sh universal
+
+      - name: Convert the sample PDFs
+        run: |
+          mkdir -p dist/samples
+          CLI="dist/PDF to EPUB.app/Contents/Resources/pdf2epub"
+          "$CLI" Tests/Fixtures/alice-sample.pdf -o dist/samples/alice-sample.epub
+          "$CLI" Tests/Fixtures/alice-no-bookmarks.pdf -o dist/samples/alice-no-bookmarks.epub
+
+      - name: Validate with EPUBCheck
+        run: |
+          curl -sSL -o epubcheck.zip https://github.com/w3c/epubcheck/releases/download/v5.1.0/epubcheck-5.1.0.zip
+          unzip -q epubcheck.zip
+          for f in dist/samples/*.epub; do java -jar epubcheck-5.1.0/epubcheck.jar "$f"; done
+
+      - name: Package
+        run: ditto -c -k --keepParent "dist/PDF to EPUB.app" "dist/PDF-to-EPUB.zip"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: PDF-to-EPUB-app
+          path: dist/PDF-to-EPUB.zip
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sample-epubs
+          path: dist/samples/*.epub
+
+  linux-core:
+    # The layout and EPUB code is plain Swift, so it's also checked on Linux.
+    runs-on: ubuntu-latest
+    container: swift:6.0
+    steps:
+      - uses: actions/checkout@v4
+      - run: swift test

@@ -1,2 +1,106 @@
-# pdf-to-epub-converter
-A simple MacOS app to convert PDF books to EPUBs.
+# PDF to EPUB
+
+A small Mac app that turns a PDF book into a reflowable EPUB for Apple Books.
+
+A PDF is a set of fixed pages. In Books that means pinching and scrolling, and your font, size and theme settings don't apply. This app rebuilds the book's text as flowing chapters, so Books can lay it out on any screen the way it does for books from the Book Store.
+
+## What it does
+
+- **Rejoins paragraphs** from the separate lines a PDF stores, including paragraphs that carry on over a page turn.
+- **Rejoins words split at a line end.** “conversa-/tions” comes back as “conversations”, while a real compound like “waistcoat-pocket” keeps its hyphen.
+- **Removes page furniture**: page numbers, plus running heads such as the book or chapter title at the top of each page.
+- **Finds chapters** from the PDF's bookmarks. If there are none, it finds them from headings: bigger type, or lines such as “Chapter 3” or “Prologue”. You get a working table of contents in Books.
+- **Keeps italics and bold**, scene breaks (`* * *` or a large gap), and drop caps (a large first letter gets reattached to its word).
+- **Makes a cover** from the first page.
+- **Reads scanned books** with macOS's built-in text recognition (Vision) when a page holds only a picture of text.
+- **Keeps illustration pages** (a picture with a short caption) as images.
+- **Leaves typography to you**: fonts, alignment and colours aren't forced, so Books' themes and font choices work normally.
+
+The output is EPUB 3, with an EPUB 2 table of contents included for older readers, and it passes [EPUBCheck](https://www.w3.org/publishing/epubcheck/) with no errors or warnings.
+
+## Using it
+
+1. Open **PDF to EPUB**.
+2. Drop a PDF on the window, or click **Choose PDF…**. You can also drop a PDF on the app's Dock icon or use Finder's *Open With*.
+3. Check the title and author, which come from the PDF where possible.
+4. Click **Convert to EPUB…** and pick where to save. With “Open in Books when done” on, the book goes straight into your Books library.
+
+### Options
+
+| Option | What it's for |
+| --- | --- |
+| Use the first page as the cover | Makes the cover image from page 1. If page 1 is mostly a picture, it's left out of the text. |
+| Remove page numbers and running headers | Turn off only if real text is going missing from the tops or bottoms of pages. |
+| Use the PDF's bookmarks for chapters | Turn off if the bookmarks are poor (for example one per page) to find chapters from headings instead. |
+| Read scanned pages with text recognition | Slower, but needed for scanned books. |
+| Keep illustration pages as pictures | Pages that are mostly an image become a full-width image in the book. |
+
+### Command line
+
+The app includes a command-line version:
+
+```sh
+"/Applications/PDF to EPUB.app/Contents/Resources/pdf2epub" book.pdf --open
+pdf2epub book.pdf -o ~/Desktop/book.epub --title "Better Title" --author "Someone"
+pdf2epub --help
+```
+
+This is handy for converting a stack of books, or for checking what the converter makes of a tricky PDF: it lists the chapters it found.
+
+## Installing
+
+### Build it yourself (recommended)
+
+You'll need macOS 13 or later and the Xcode Command Line Tools (`xcode-select --install`).
+
+```sh
+git clone <this repo>
+cd pdf-to-epub
+scripts/build-app.sh
+open dist
+```
+
+Drag **PDF to EPUB.app** into Applications.
+
+### Download from CI
+
+Every push builds the app on GitHub Actions: open the latest run under **Actions** and download the **PDF-to-EPUB-app** artifact. That build is signed ad hoc, not notarized, so the first time you open it macOS will say it can't check it. Right-click the app, choose **Open**, then **Open** again. You can also clear the quarantine flag:
+
+```sh
+xattr -dr com.apple.quarantine "/Applications/PDF to EPUB.app"
+```
+
+## Limitations
+
+The converter works well for what most PDF books are: a single column of prose. Some layouts are beyond what can be recovered from a PDF reliably:
+
+- **Multi-column pages, sidebars and footnotes** come out in the order the PDF stores them, which isn't always reading order. Footnotes end up as ordinary paragraphs where they sit on the page.
+- **Pictures inside text pages** are dropped. Only pages that are mostly a picture are kept.
+- **Tables, equations and poetry** lose some of their layout. Each line of verse usually becomes its own short paragraph.
+- **Password-protected PDFs** need unlocking first (open in Preview, then *File → Export as PDF*).
+- Heading detection is a guess based on type size. If a book's chapters don't split well, try the bookmarks option both ways.
+
+## How it works
+
+```
+PDF ──PDFKit──▶ lines with position, size, style ──LayoutAnalyzer──▶ chapters ──EPUBWriter──▶ .epub
+       └ Vision OCR for scanned pages
+```
+
+- `Sources/PDFToEPUBCore/PDFExtractor.swift` reads each line's text, position, font size and bold/italic runs through PDFKit. It runs Vision text recognition on image-only pages, spots illustration pages, and reads the bookmarks.
+- `Sources/PDFToEPUBCore/LayoutAnalyzer.swift` does the reconstruction. It works out the body text size, margins and line spacing for each page. Then it removes repeated heads and page numbers, decides where paragraphs start (indent style or gap style), rejoins hyphenated words, and ranks headings by size to split chapters.
+- `Sources/PDFToEPUBCore/EPUBWriter.swift` and `ZipWriter.swift` write the EPUB with no third-party dependencies.
+- `Sources/PDFToEPUB` is the SwiftUI app, and `Sources/pdf2epub` is the command-line tool.
+
+The layout and EPUB code is plain Swift, so its tests also run on Linux. The tests that go through PDFKit run on macOS.
+
+## Development
+
+```sh
+swift build
+swift test
+swift run PDFToEPUB     # run the app without bundling it
+swift run pdf2epub Tests/Fixtures/alice-sample.pdf -o /tmp/alice.epub
+```
+
+`Tests/Fixtures` holds a sample book PDF made by `scripts/make_sample_pdf.py` (public-domain text from *Alice's Adventures in Wonderland*). It deliberately includes the awkward parts: a picture cover, changing running heads, page numbers, hyphenated justified text, a scene break, an illustration plate, and bookmarks (there's also a copy without bookmarks).
