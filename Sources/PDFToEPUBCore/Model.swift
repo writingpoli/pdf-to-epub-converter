@@ -89,6 +89,21 @@ extension Array where Element == TextRun {
     }
 
     var joinedText: String { map(\.text).joined() }
+
+    /// Marks note numbers that a PDF reader handed back as a run of their own,
+    /// stuck to the word or punctuation before them ("again.1", "off).12").
+    /// Raised numbers often keep the text's font size, so this is sometimes
+    /// the only sign of them.
+    public mutating func markAttachedNoteMarkers() {
+        for i in indices.dropFirst() where !self[i].superscript {
+            let text = self[i].text
+            guard text.count <= 3, text.allSatisfy({ $0.isNumber }) || text.allSatisfy({ "*†‡§¶".contains($0) }),
+                  let before = self[i - 1].text.last,
+                  before.isLetter || ".,;:!?)”’\"'".contains(before) else { continue }
+            if i + 1 < count, let after = self[i + 1].text.first, after.isLetter || after.isNumber { continue }
+            self[i].superscript = true
+        }
+    }
 }
 
 /// One line of text as it appears on a PDF page.

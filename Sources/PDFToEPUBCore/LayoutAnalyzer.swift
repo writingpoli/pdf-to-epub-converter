@@ -104,6 +104,7 @@ public struct LayoutAnalyzer {
             line.runs[last].text = String(t[..<(t.lastIndex(where: { $0 != " " }).map { t.index(after: $0) } ?? t.startIndex)])
         }
         line.runs = line.runs.filter { !$0.text.isEmpty }
+        line.runs.markAttachedNoteMarkers()
         return line
     }
 

@@ -49,6 +49,19 @@ final class LinkTests: XCTestCase {
         XCTAssertEqual(runs.map(\.italic), [false, false, true, true, false])
     }
 
+    /// What PDFKit reports for a raised note number set at full size.
+    func testAttachedNumberRunsAreNoteMarkers() {
+        var runs = [TextRun(text: "get out again."), TextRun(text: "1"), TextRun(text: " Then")]
+        runs.markAttachedNoteMarkers()
+        XCTAssertEqual(runs.map(\.superscript), [false, true, false])
+
+        // Not markers: a number after a space, or one that runs into more text.
+        var other = [TextRun(text: "chapter "), TextRun(text: "12"), TextRun(text: "B", italic: true),
+                     TextRun(text: "x"), TextRun(text: "2"), TextRun(text: "nd")]
+        other.markAttachedNoteMarkers()
+        XCTAssertEqual(other.map(\.superscript), [false, false, false, false, false, false])
+    }
+
     func testAddLinkIgnoresSpacing() {
         var l = line("See Chapter  Two for more", page: 0, y: 0)
         XCTAssertTrue(l.addLink(.anchor("x"), text: "Chapter Two"))
