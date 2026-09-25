@@ -54,8 +54,8 @@ This is handy for converting a stack of books, or for checking what the converte
 You'll need macOS 13 or later and the Xcode Command Line Tools (`xcode-select --install`).
 
 ```sh
-git clone <this repo>
-cd pdf-to-epub
+git clone https://github.com/writingpoli/pdf-to-epub-converter
+cd pdf-to-epub-converter
 scripts/build-app.sh
 open dist
 ```
