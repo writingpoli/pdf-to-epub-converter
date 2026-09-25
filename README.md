@@ -10,6 +10,7 @@ A PDF is a set of fixed pages. In Books that means pinching and scrolling, and y
 - **Rejoins words split at a line end.** “conversa-/tions” comes back as “conversations”, while a real compound like “waistcoat-pocket” keeps its hyphen.
 - **Removes page furniture**: page numbers, plus running heads such as the book or chapter title at the top of each page.
 - **Finds chapters** from the PDF's bookmarks. If there are none, it finds them from headings: bigger type, or lines such as “Chapter 3” or “Prologue”. You get a working table of contents in Books.
+- **Links things up.** A printed contents page becomes a list of links to the chapters, with the page numbers removed. Footnotes leave the flow of the text and open as pop-up notes in Books from their superscript markers, with a link back. Endnotes in a Notes section link both ways too, even when they're numbered afresh for each chapter. Any links the PDF already has, including web links, are kept.
 - **Keeps italics and bold**, scene breaks (`* * *` or a large gap), and drop caps (a large first letter gets reattached to its word).
 - **Makes a cover** from the first page.
 - **Reads scanned books** with macOS's built-in text recognition (Vision) when a page holds only a picture of text.
@@ -74,7 +75,8 @@ xattr -dr com.apple.quarantine "/Applications/PDF to EPUB.app"
 
 The converter works well for what most PDF books are: a single column of prose. Some layouts are beyond what can be recovered from a PDF reliably:
 
-- **Multi-column pages, sidebars and footnotes** come out in the order the PDF stores them, which isn't always reading order. Footnotes end up as ordinary paragraphs where they sit on the page.
+- **Multi-column pages and sidebars** come out in the order the PDF stores them, which isn't always reading order.
+- **Notes** are found by their small type and leading number (footnotes) or under a “Notes” heading (endnotes), and matched to superscript references. Notes marked in unusual ways, or references that aren't set as smaller raised numbers, stay as plain text.
 - **Pictures inside text pages** are dropped. Only pages that are mostly a picture are kept.
 - **Tables, equations and poetry** lose some of their layout. Each line of verse usually becomes its own short paragraph.
 - **Password-protected PDFs** need unlocking first (open in Preview, then *File → Export as PDF*).
@@ -103,4 +105,4 @@ swift run PDFToEPUB     # run the app without bundling it
 swift run pdf2epub Tests/Fixtures/alice-sample.pdf -o /tmp/alice.epub
 ```
 
-`Tests/Fixtures` holds a sample book PDF made by `scripts/make_sample_pdf.py` (public-domain text from *Alice's Adventures in Wonderland*). It deliberately includes the awkward parts: a picture cover, changing running heads, page numbers, hyphenated justified text, a scene break, an illustration plate, and bookmarks (there's also a copy without bookmarks).
+`Tests/Fixtures` holds a sample book PDF made by `scripts/make_sample_pdf.py` (public-domain text from *Alice's Adventures in Wonderland*). It deliberately includes the awkward parts: a picture cover, a printed contents page, changing running heads, page numbers, hyphenated justified text, a scene break, an illustration plate, a footnote, endnotes, and bookmarks with clickable contents entries (there's also a copy with no bookmarks or links, to test the fallbacks).

@@ -13,6 +13,9 @@ public struct LayoutOptions: Equatable {
     public var skipPages: Set<Int> = []
     /// Title used when the book has no chapters of its own.
     public var fallbackTitle = "Untitled"
+    /// Link note references to their footnotes and endnotes, and contents
+    /// entries to their chapters.
+    public var linkNotesAndContents = true
 
     public init() {}
 }
@@ -41,18 +44,37 @@ public struct LayoutAnalyzer {
         lines = Self.mergeFragments(lines)
 
         let bodySize = Self.bodyFontSize(lines)
+        var printedPageNumbers: [Int: String] = [:]
         if options.removeHeadersAndFooters {
             lines = removeFurniture(lines, bodySize: bodySize,
-                                    knownTitles: outline.map(\.title) + [options.fallbackTitle])
+                                    knownTitles: outline.map(\.title) + [options.fallbackTitle],
+                                    pageNumbers: &printedPageNumbers)
         }
         lines = Self.absorbDropCaps(lines, bodySize: bodySize)
+
+        var footnotes: [Footnote] = []
+        var contentsPages: Set<Int> = []
+        if options.linkNotesAndContents {
+            (lines, footnotes) = Self.separateFootnotes(lines, bodySize: bodySize)
+            contentsPages = Self.contentsPages(lines)
+        }
 
         let metrics = PageMetrics(lines: lines, bodySize: bodySize)
         let images = pageImages.filter { !options.skipPages.contains($0.page) }
         let boundaries = options.useOutline ? (chapterEntries(outline) ?? []) : []
-        var blocks = buildBlocks(lines: lines, images: images, metrics: metrics, boundaries: boundaries)
+        var blocks = buildBlocks(lines: lines, images: images, metrics: metrics, boundaries: boundaries,
+                                 contentsPages: contentsPages)
         Self.assignHeadingLevels(&blocks)
-        return splitIntoChapters(blocks, outline: outline, bodySize: bodySize)
+        if options.linkNotesAndContents {
+            blocks = Self.insertFootnotes(footnotes, into: blocks)
+            Self.linkContentsEntries(&blocks, outline: outline, printedPageNumbers: printedPageNumbers)
+        }
+        blocks = Self.resolvePageLinks(blocks, bodySize: bodySize)
+        var chapters = splitIntoChapters(blocks, outline: outline, bodySize: bodySize)
+        if options.linkNotesAndContents {
+            Self.linkEndnotes(&chapters)
+        }
+        return chapters
     }
 
     // MARK: - Cleanup
@@ -164,6 +186,13 @@ public struct LayoutAnalyzer {
     }
 
     func removeFurniture(_ lines: [TextLine], bodySize: Double, knownTitles: [String] = []) -> [TextLine] {
+        var ignored: [Int: String] = [:]
+        return removeFurniture(lines, bodySize: bodySize, knownTitles: knownTitles, pageNumbers: &ignored)
+    }
+
+    /// - Parameter pageNumbers: filled with the page number printed on each PDF page.
+    func removeFurniture(_ lines: [TextLine], bodySize: Double, knownTitles: [String],
+                         pageNumbers: inout [Int: String]) -> [TextLine] {
         let byPage = Dictionary(grouping: lines.indices, by: { lines[$0].page })
         var spacings: [Double] = []
         for (_, indices) in byPage {
@@ -183,7 +212,7 @@ public struct LayoutAnalyzer {
         }
         titleKeys.remove("")
 
-        var candidates: [Int: (key: String, isolated: Bool)] = [:]
+        var candidates: [Int: (key: String, isolated: Bool, apart: Bool)] = [:]
         for (_, indices) in byPage {
             let sorted = indices.sorted { lines[$0].y < lines[$1].y }
             for (position, index) in sorted.enumerated() {
@@ -195,7 +224,8 @@ public struct LayoutAnalyzer {
                 let neighbour = inTopZone
                     ? (position + 1 < sorted.count ? lines[sorted[position + 1]].y - line.y : .infinity)
                     : (position > 0 ? line.y - lines[sorted[position - 1]].y : .infinity)
-                candidates[index] = (Self.furnitureKey(line.text), neighbour > spacing * 1.8 && sorted.count >= 5)
+                candidates[index] = (Self.furnitureKey(line.text), neighbour > spacing * 1.8 && sorted.count >= 5,
+                                     neighbour > spacing * 1.2)
             }
         }
         var pagesPerKey: [String: Set<Int>] = [:]
@@ -206,8 +236,11 @@ public struct LayoutAnalyzer {
         for (index, candidate) in candidates {
             let line = lines[index]
             let small = line.fontSize <= bodySize * 1.1
-            if Self.isPageNumber(line.text) {
+            // A page number stands apart; a year ending a footnote ("1862.") doesn't.
+            if Self.isPageNumber(line.text) && candidate.apart {
                 drop.insert(index)
+                let digits = line.text.filter { $0.isNumber || "ivxlcdmIVXLCDM".contains($0) }
+                if !digits.isEmpty { pageNumbers[line.page] = digits.lowercased() }
             } else if small && pagesPerKey[candidate.key, default: []].count >= 3 {
                 drop.insert(index)
             } else if candidate.isolated && line.fontSize < bodySize * 0.95
@@ -219,6 +252,12 @@ public struct LayoutAnalyzer {
             }) {
                 drop.insert(index)
             }
+        }
+        // A running head spotted on one page is a running head on sparse pages too.
+        let furnitureKeys = Set(drop.compactMap { candidates[$0]?.key })
+        for (index, candidate) in candidates where furnitureKeys.contains(candidate.key)
+            && lines[index].fontSize <= bodySize * 1.1 {
+            drop.insert(index)
         }
         return lines.indices.filter { !drop.contains($0) }.map { lines[$0] }
     }
@@ -338,6 +377,9 @@ public struct LayoutAnalyzer {
         var y: Double
         /// For headings: the size used to rank heading levels.
         var headingSize: Double?
+        /// For an entry on a printed contents page: the page number it gave.
+        var contentsPageNumber: String?
+        var isContentsEntry = false
     }
 
     static let sceneBreakPattern = try! NSRegularExpression(
@@ -347,6 +389,12 @@ public struct LayoutAnalyzer {
         pattern: #"^(chapter|part|book|prologue|epilogue|introduction|preface|foreword|afterword|acknowledg(e)?ments?|appendix|interlude|contents|table of contents|notes|bibliography|index|dedication|about the author)\b"#,
         options: [.caseInsensitive])
 
+    static let numberedItemPattern = try! NSRegularExpression(pattern: #"^\s*\d{1,3}[.)]\s+\S"#)
+
+    static let backMatterPattern = try! NSRegularExpression(
+        pattern: #"^\s*(notes|end\s?notes|index|bibliography|references|glossary|contents|table of contents|acknowledg(e)?ments?|works cited|sources|further reading)\s*$"#,
+        options: [.caseInsensitive])
+
     static func matches(_ regex: NSRegularExpression, _ text: String) -> Bool {
         regex.firstMatch(in: text, range: NSRange(text.startIndex..., in: text)) != nil
     }
@@ -354,7 +402,7 @@ public struct LayoutAnalyzer {
     static let terminalPunctuation: Set<Character> = [".", "!", "?", "…", ":", "\"", "”", "’", "'", ")", "]", "»"]
 
     func buildBlocks(lines: [TextLine], images: [PageImage], metrics m: PageMetrics,
-                     boundaries: [OutlineEntry] = []) -> [PositionedBlock] {
+                     boundaries: [OutlineEntry] = [], contentsPages: Set<Int> = []) -> [PositionedBlock] {
         let hyphenatedWords = Self.hyphenatedWords(in: lines)
         let imagesByPage = Dictionary(grouping: images, by: \.page)
         let linesByPage = Dictionary(grouping: lines, by: \.page)
@@ -409,17 +457,30 @@ public struct LayoutAnalyzer {
                     continue
                 }
 
+                // An entry on a printed contents page gets its own paragraph, without
+                // the page number (meaningless once the text reflows).
+                if contentsPages.contains(page), !Self.matches(Self.contentsTitlePattern, text),
+                   let entry = Self.contentsEntry(line) {
+                    flush()
+                    var block = PositionedBlock(block: .paragraph(Self.compact(entry.runs), indented: false),
+                                                page: page, y: line.y)
+                    block.isContentsEntry = true
+                    block.contentsPageNumber = entry.pageNumber
+                    blocks.append(block)
+                    continue
+                }
+
                 if options.detectHeadings, let size = headingSize(line, text: text, gapBefore: gapBefore,
                                                                     gapAfter: gapAfter, metrics: m) {
                     flush()
                     if var last = blocks.last, let lastSize = last.headingSize, abs(lastSize - size) < 0.6,
                        last.page == page, case .heading(let level, let runs) = last.block,
                        gapBefore < max(line.fontSize, body) * 2.4 {
-                        let plain = line.runs.map { TextRun(text: $0.text, italic: $0.italic) }
+                        let plain = line.runs.map { run -> TextRun in var r = run; r.bold = false; return r }
                         last.block = .heading(level: level, runs: Self.compact(runs + [TextRun(text: " ")] + plain))
                         blocks[blocks.count - 1] = last
                     } else {
-                        blocks.append(PositionedBlock(block: .heading(level: 1, runs: line.runs.map { TextRun(text: $0.text, italic: $0.italic) }),
+                        blocks.append(PositionedBlock(block: .heading(level: 1, runs: line.runs.map { run -> TextRun in var r = run; r.bold = false; return r }),
                                                       page: page, y: line.y, headingSize: size))
                     }
                     continue
@@ -461,6 +522,9 @@ public struct LayoutAnalyzer {
                             }
                         } else if !m.usesIndents && !m.usesGaps
                                     && m.isShort(p, slack: body * 1.5) && pEndsSentence {
+                            startsNew = true
+                        } else if pEndsSentence && Self.matches(Self.numberedItemPattern, line.text) {
+                            // "12. Next note" or a numbered list item.
                             startsNew = true
                         }
                     } else {
@@ -582,9 +646,10 @@ public struct LayoutAnalyzer {
         var result: [TextRun] = []
         for run in runs where !run.text.isEmpty {
             // A plain space between two runs of the same style shouldn't split them.
-            if let last = result.last, last.bold == run.bold, last.italic == run.italic {
+            if let last = result.last, last.hasSameStyle(as: run) {
                 result[result.count - 1].text += run.text
-            } else if run.text.allSatisfy({ $0 == " " }), !result.isEmpty {
+            } else if run.text.allSatisfy({ $0 == " " }), let last = result.last,
+                      last.link == nil, !last.superscript, last.id == nil {
                 result[result.count - 1].text += run.text
             } else {
                 result.append(run)
@@ -633,6 +698,11 @@ public struct LayoutAnalyzer {
             chapters = splitByPages(blocks)
         }
         chapters = chapters.filter { !$0.blocks.isEmpty }
+        for i in chapters.indices {
+            // Footnotes gather at the end of their chapter.
+            let isNote: (Block) -> Bool = { if case .footnote = $0 { return true } else { return false } }
+            chapters[i].blocks = chapters[i].blocks.filter { !isNote($0) } + chapters[i].blocks.filter(isNote)
+        }
         for i in chapters.indices where chapters[i].title.trimmingCharacters(in: .whitespaces).isEmpty {
             chapters[i].title = "Section \(i + 1)"
         }
@@ -693,10 +763,23 @@ public struct LayoutAnalyzer {
             var j = i
             var group: [Block] = []
             var containsSplit = false
-            while j < blocks.count, case .heading(let level, _) = blocks[j].block {
+            var sawHeading = false
+            while j < blocks.count {
+                if case .heading(let level, _) = blocks[j].block {
+                    if level <= splitLevel { containsSplit = true }
+                    sawHeading = true
+                } else if case .anchor = blocks[j].block {
+                    // An anchor goes with the heading after it.
+                } else {
+                    break
+                }
                 group.append(blocks[j].block)
-                if level <= splitLevel { containsSplit = true }
                 j += 1
+            }
+            if !sawHeading {
+                current.blocks.append(contentsOf: group.isEmpty ? [blocks[i].block] : group)
+                i = max(j, i + 1)
+                continue
             }
             if group.isEmpty {
                 current.blocks.append(blocks[i].block)
@@ -708,7 +791,11 @@ public struct LayoutAnalyzer {
                     if current.title.isEmpty { current.title = Self.firstHeadingText(current.blocks) ?? "Front Matter" }
                     chapters.append(current)
                 }
-                let title = group.compactMap(Self.headingText).reduce("") { title, part in
+                let parts = group.compactMap(Self.headingText)
+                // "Notes", "Index" and the like head a section of their own; what
+                // follows is a subheading, not part of the name.
+                let standalone = parts.first.map { Self.matches(Self.backMatterPattern, $0) } ?? false
+                let title = (standalone ? Array(parts.prefix(1)) : parts).reduce("") { title, part in
                     guard let last = title.last else { return part }
                     return title + (".:;!?—".contains(last) ? " " : ": ") + part
                 }

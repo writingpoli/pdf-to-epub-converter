@@ -108,6 +108,7 @@ public final class PDFExtractor {
             guard bounds.width > 0, bounds.height > 0 else { continue }
 
             var runs: [TextRun] = []
+            var runSizes: [Double?] = []
             var sizeWeights: [Double: Int] = [:]
             if let attributed = lineSelection.attributedString, attributed.length > 0 {
                 attributed.enumerateAttributes(in: NSRange(location: 0, length: attributed.length), options: []) { attrs, range, _ in
@@ -115,6 +116,7 @@ public final class PDFExtractor {
                     let font = attrs[.font] as? NSFont
                     let traits = Self.traits(of: font)
                     runs.append(TextRun(text: text, bold: traits.bold, italic: traits.italic))
+                    runSizes.append(font.map { Double($0.pointSize) })
                     if let font, font.pointSize > 1 {
                         let letters = text.filter { !$0.isWhitespace }.count
                         sizeWeights[Double(font.pointSize), default: 0] += max(1, letters)
@@ -129,6 +131,16 @@ public final class PDFExtractor {
             let ratio = fontSize / max(heightEstimate, 0.1)
             if ratio < 0.55 || ratio > 1.7 { fontSize = heightEstimate }
 
+            // Note references: numbers or symbols set noticeably smaller than the line.
+            for i in runs.indices where i < runSizes.count {
+                guard let size = runSizes[i], size < fontSize * 0.8 else { continue }
+                let marker = runs[i].text.trimmingCharacters(in: .whitespaces)
+                if !marker.isEmpty, marker.count <= 3,
+                   marker.allSatisfy({ $0.isNumber }) || marker.allSatisfy({ "*†‡§¶".contains($0) }) {
+                    runs[i].superscript = true
+                }
+            }
+
             lines.append(TextLine(runs: runs, page: index,
                                   x: Double(bounds.minX - box.minX),
                                   y: Double(box.maxY - bounds.maxY),
@@ -136,7 +148,61 @@ public final class PDFExtractor {
                                   fontSize: fontSize,
                                   pageWidth: Double(box.width), pageHeight: Double(box.height)))
         }
+        addLinks(on: page, box: box, to: &lines)
         return lines
+    }
+
+    /// Carries the PDF's own links (contents entries, note references, web
+    /// addresses) over to the words they cover.
+    func addLinks(on page: PDFPage, box: CGRect, to lines: inout [TextLine]) {
+        for annotation in page.annotations where annotation.type == "Link" {
+            let link: Link
+            let destination = annotation.destination ?? (annotation.action as? PDFActionGoTo)?.destination
+            if let destination, let target = destination.page {
+                link = .page(document.index(for: target), y: topY(of: destination, on: target))
+            } else if let url = annotation.url ?? (annotation.action as? PDFActionURL)?.url {
+                link = .url(url.absoluteString)
+            } else {
+                continue
+            }
+            let bounds = annotation.bounds
+            guard let linked = page.selection(for: bounds)?.string?
+                .trimmingCharacters(in: .whitespacesAndNewlines), !linked.isEmpty else { continue }
+            let top = Double(box.maxY - bounds.maxY), bottom = Double(box.maxY - bounds.minY)
+            let left = Double(bounds.minX - box.minX), right = Double(bounds.maxX - box.minX)
+            let hits = lines.indices.filter { i in
+                lines[i].y < bottom && lines[i].maxY > top && lines[i].x < right && lines[i].maxX > left
+            }
+            let linkedKey = linked.filter { !$0.isWhitespace }
+            for i in hits {
+                // A note number: prefer the superscript run that reads the same.
+                if let r = lines[i].runs.firstIndex(where: {
+                    $0.superscript && $0.link == nil && $0.text.trimmingCharacters(in: .whitespaces) == linked
+                }) {
+                    lines[i].runs[r].link = link
+                    continue
+                }
+                if lines[i].addLink(link, text: linked) { continue }
+                let lineKey = lines[i].text.filter { !$0.isWhitespace }
+                let overlap = min(lines[i].maxX, right) - max(lines[i].x, left)
+                if (!lineKey.isEmpty && linkedKey.contains(lineKey)) || overlap >= lines[i].width * 0.8 {
+                    lines[i].runs = lines[i].runs.map { run in
+                        var run = run
+                        if run.link == nil { run.link = link }
+                        return run
+                    }
+                }
+            }
+        }
+    }
+
+    /// Distance from the top of the page a destination points at, if it names one.
+    func topY(of destination: PDFDestination, on page: PDFPage) -> Double? {
+        let box = page.bounds(for: .cropBox)
+        let pointY = destination.point.y
+        guard pointY != kPDFDestinationUnspecifiedValue, pointY.isFinite,
+              pointY >= box.minY - 1, pointY <= box.maxY + 1 else { return nil }
+        return Double(box.maxY - pointY)
     }
 
     static func traits(of font: NSFont?) -> (bold: Bool, italic: Bool) {
@@ -283,13 +349,7 @@ public final class PDFExtractor {
                 let destination = child.destination ?? (child.action as? PDFActionGoTo)?.destination
                 if let destination, let page = destination.page {
                     let index = document.index(for: page)
-                    let box = page.bounds(for: .cropBox)
-                    var y: Double?
-                    let pointY = destination.point.y
-                    if pointY != kPDFDestinationUnspecifiedValue, pointY.isFinite,
-                       pointY >= box.minY - 1, pointY <= box.maxY + 1 {
-                        y = Double(box.maxY - pointY)
-                    }
+                    let y = topY(of: destination, on: page)
                     let title = (child.label ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
                     if !title.isEmpty {
                         entries.append(OutlineEntry(title: title, page: index, y: y, level: level))

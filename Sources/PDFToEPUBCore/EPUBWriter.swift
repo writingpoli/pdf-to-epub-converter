@@ -48,38 +48,71 @@ public struct EPUBWriter {
             zip.add("OEBPS/text/cover.xhtml", coverPage(book: book, imageHref: "../" + href, language: language))
         }
 
-        var fileNumber = 0
+        // Lay out the files first, so links can say which file their target is in.
+        var files: [(id: String, chapterIndex: Int, part: Int, blocks: [Block])] = []
         for (chapterIndex, chapter) in book.chapters.enumerated() {
             for (partIndex, blocks) in split(chapter.blocks).enumerated() {
-                fileNumber += 1
-                let id = String(format: "ch%03d", fileNumber)
-                let href = "text/\(id).xhtml"
-                var body = ""
-                var previousWasParagraph = false
-                for block in blocks {
-                    switch block {
-                    case .heading(let level, let runs):
-                        body += "<h\(level)>\(inline(runs))</h\(level)>\n"
-                        previousWasParagraph = false
-                    case .paragraph(let runs, _):
-                        let cls = previousWasParagraph ? "" : " class=\"noindent\""
-                        body += "<p\(cls)>\(inline(runs))</p>\n"
-                        previousWasParagraph = true
-                    case .sceneBreak:
-                        body += "<hr class=\"scene\"/>\n"
-                        previousWasParagraph = false
-                    case .image(let image, let alt):
-                        let src = addImage(image)
-                        body += "<figure class=\"page\"><img src=\"../\(src)\" alt=\"\(escape(alt, attribute: true))\"/></figure>\n"
-                        previousWasParagraph = false
-                    }
-                }
-                let title = partIndex == 0 ? chapter.title : "\(chapter.title) (continued)"
-                zip.add("OEBPS/\(href)", xhtml(title: title, body: "<section epub:type=\"chapter\" id=\"c\(chapterIndex + 1)\">\n\(body)</section>", language: language))
-                manifest.append((id, href, "application/xhtml+xml", nil))
-                spine.append((id, true))
-                if partIndex == 0 { toc.append((chapter.title, href)) }
+                files.append((String(format: "ch%03d", files.count + 1), chapterIndex, partIndex, blocks))
             }
+        }
+        var targets: [String: String] = [:]   // element id -> file name
+        for file in files {
+            for block in file.blocks {
+                switch block {
+                case .anchor(let id), .footnote(let id, _): targets[id] = "\(file.id).xhtml"
+                default: break
+                }
+                for run in block.runs ?? [] {
+                    if let id = run.id { targets[id] = "\(file.id).xhtml" }
+                }
+            }
+        }
+
+        for file in files {
+            let chapter = book.chapters[file.chapterIndex]
+            let fileName = "\(file.id).xhtml"
+            let href = "text/\(fileName)"
+            var body = ""
+            var previousWasParagraph = false
+            var pendingID: String?
+            func idAttribute() -> String {
+                defer { pendingID = nil }
+                return pendingID.map { " id=\"\(escape($0, attribute: true))\"" } ?? ""
+            }
+            for block in file.blocks {
+                switch block {
+                case .heading(let level, let runs):
+                    body += "<h\(level)\(idAttribute())>\(inline(runs, targets: targets, file: fileName))</h\(level)>\n"
+                    previousWasParagraph = false
+                case .paragraph(let runs, _):
+                    let cls = previousWasParagraph ? "" : " class=\"noindent\""
+                    body += "<p\(idAttribute())\(cls)>\(inline(runs, targets: targets, file: fileName))</p>\n"
+                    previousWasParagraph = true
+                case .sceneBreak:
+                    body += "<hr\(idAttribute()) class=\"scene\"/>\n"
+                    previousWasParagraph = false
+                case .image(let image, let alt):
+                    let src = addImage(image)
+                    body += "<figure\(idAttribute()) class=\"page\"><img src=\"../\(src)\" alt=\"\(escape(alt, attribute: true))\"/></figure>\n"
+                    previousWasParagraph = false
+                case .anchor(let id):
+                    if let waiting = pendingID { body += "<div id=\"\(escape(waiting, attribute: true))\"></div>\n" }
+                    pendingID = id
+                case .footnote(let id, let runs):
+                    if let waiting = pendingID {
+                        body += "<div id=\"\(escape(waiting, attribute: true))\"></div>\n"
+                        pendingID = nil
+                    }
+                    body += "<aside epub:type=\"footnote\" class=\"footnote\" id=\"\(escape(id, attribute: true))\"><p>\(inline(runs, targets: targets, file: fileName))</p></aside>\n"
+                    previousWasParagraph = false
+                }
+            }
+            if let waiting = pendingID { body += "<div id=\"\(escape(waiting, attribute: true))\"></div>\n" }
+            let title = file.part == 0 ? chapter.title : "\(chapter.title) (continued)"
+            zip.add("OEBPS/\(href)", xhtml(title: title, body: "<section epub:type=\"chapter\" id=\"c\(file.chapterIndex + 1)\">\n\(body)</section>", language: language))
+            manifest.append((file.id, href, "application/xhtml+xml", nil))
+            spine.append((file.id, true))
+            if file.part == 0 { toc.append((chapter.title, href)) }
         }
 
         manifest.append(("nav", "nav.xhtml", "application/xhtml+xml", "nav"))
@@ -99,12 +132,17 @@ public struct EPUBWriter {
         for block in blocks {
             let blockSize: Int
             switch block {
-            case .heading(_, let runs), .paragraph(let runs, _): blockSize = runs.reduce(0) { $0 + $1.text.count }
-            case .sceneBreak: blockSize = 0
+            case .heading(_, let runs), .paragraph(let runs, _), .footnote(_, let runs):
+                blockSize = runs.reduce(0) { $0 + $1.text.count }
+            case .sceneBreak, .anchor: blockSize = 0
             case .image: blockSize = 500
             }
             if size + blockSize > maxCharactersPerFile, !parts[parts.count - 1].isEmpty {
-                parts.append([])
+                // An anchor belongs with the block after it.
+                var carried: [Block] = []
+                while case .anchor = parts[parts.count - 1].last { carried.insert(parts[parts.count - 1].removeLast(), at: 0) }
+                if parts[parts.count - 1].isEmpty { parts.removeLast() }
+                parts.append(carried)
                 size = 0
             }
             parts[parts.count - 1].append(block)
@@ -115,7 +153,10 @@ public struct EPUBWriter {
 
     // MARK: - Markup
 
-    func inline(_ runs: [TextRun]) -> String {
+    /// - Parameters:
+    ///   - targets: which file each element id is in; links to other ids are dropped.
+    ///   - file: the file being written, so links within it need no file name.
+    func inline(_ runs: [TextRun], targets: [String: String] = [:], file: String = "") -> String {
         var out = ""
         for run in runs {
             var text = run.text.split(separator: "\n", omittingEmptySubsequences: false)
@@ -123,6 +164,28 @@ public struct EPUBWriter {
                 .joined(separator: "<br/>")
             if run.italic { text = "<em>\(text)</em>" }
             if run.bold { text = "<strong>\(text)</strong>" }
+            if run.superscript { text = "<sup>\(text)</sup>" }
+            let idAttribute = run.id.map { " id=\"\(escape($0, attribute: true))\"" } ?? ""
+            var href: String?
+            switch run.link {
+            case .anchor(let target):
+                if let targetFile = targets[target] {
+                    href = (targetFile == file ? "" : targetFile) + "#" + target
+                }
+            case .url(let url):
+                let lowered = url.lowercased()
+                if lowered.hasPrefix("http://") || lowered.hasPrefix("https://") || lowered.hasPrefix("mailto:") {
+                    href = url
+                }
+            case .page, nil:
+                break
+            }
+            if let href {
+                let type = run.superscript && href.contains("#") ? " epub:type=\"noteref\"" : ""
+                text = "<a\(idAttribute)\(type) href=\"\(escape(href, attribute: true))\">\(text)</a>"
+            } else if !idAttribute.isEmpty {
+                text = "<a\(idAttribute)>\(text)</a>"
+            }
             out += text
         }
         return out
@@ -336,6 +399,13 @@ public struct EPUBWriter {
       max-height: 95vh;
     }
     body.cover { margin: 0; padding: 0; text-align: center; }
+    sup { line-height: 0; }
+    sup a { text-decoration: none; }
+    aside.footnote {
+      font-size: 0.9em;
+      margin: 0.8em 0 0 0;
+    }
+    aside.footnote p { text-indent: 0; }
     section.cover img {
       max-width: 100%;
       max-height: 100vh;
