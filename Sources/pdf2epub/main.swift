@@ -75,6 +75,8 @@ layout.useOutline = !ignoreBookmarks
 /// Format of --dump-lines output and --lines-json input.
 struct LinesDump: Codable {
     var lines: [TextLine]
+    /// The fonts in the PDF and whether each was read as bold or italic.
+    var fonts: [FontReport]?
     var outline: [OutlineEntry]?
     var title: String?
     var author: String?
@@ -116,13 +118,20 @@ options.layout = layout
 if let dumpLines {
     do {
         guard let document = PDFDocument(url: inputURL) else { fail("couldn't open \(input)") }
-        let extracted = try PDFExtractor(document: document).extract(options: options.extraction)
-        let dump = LinesDump(lines: extracted.lines, outline: extracted.outline,
+        let extractor = PDFExtractor(document: document)
+        let extracted = try extractor.extract(options: options.extraction)
+        let fonts = extractor.fonts.values.sorted { $0.characters > $1.characters }
+        let dump = LinesDump(lines: extracted.lines, fonts: fonts, outline: extracted.outline,
                              title: extracted.title, author: extracted.author)
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
         try encoder.encode(dump).write(to: URL(fileURLWithPath: dumpLines))
         print("Wrote \(extracted.lines.count) lines from \(extracted.pageCount) pages to \(dumpLines)")
+        print("Fonts (characters, style read):")
+        for font in fonts {
+            let style = [font.bold ? "bold" : nil, font.italic ? "italic" : nil].compactMap { $0 }
+            print("  \(font.name)  \(font.characters)  \(style.isEmpty ? "regular" : style.joined(separator: " "))")
+        }
     } catch {
         fail(error.localizedDescription)
     }

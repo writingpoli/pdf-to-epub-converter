@@ -19,7 +19,9 @@ jobs:
           swift run pdf2epub Tests/Fixtures/alice-sample.pdf --dump-lines lines.json
           python3 - <<'PY'
           import json
-          lines = json.load(open("lines.json"))["lines"]
+          dump = json.load(open("lines.json"))
+          print("Fonts:", [(f["name"], f["characters"], f["bold"], f["italic"]) for f in dump.get("fonts", [])])
+          lines = dump["lines"]
           for l in lines:
               text = "".join(r["text"] for r in l["runs"])
               if l["page"] in (3, 7, 11) or "Liddell" in text or any(r.get("superscript") for r in l["runs"]):

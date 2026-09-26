@@ -44,6 +44,7 @@ final class ConversionTests: XCTestCase {
         XCTAssertTrue(text.contains("pictures or conversations?"), text)
         XCTAssertTrue(text.contains("waistcoat-pocket"))
         XCTAssertTrue(text.contains("so <em>very</em> remarkable"), text)
+        XCTAssertTrue(text.contains("labelled “<strong>ORANGE MARMALADE</strong>”"), "bold in running text")
         XCTAssertFalse(text.contains("conversa-"))
         XCTAssertFalse(text.contains("<p>Alice’s Adventures in Wonderland</p>"))
         XCTAssertFalse(text.contains("<p><em>Down the Rabbit-Hole</em></p>"), text)

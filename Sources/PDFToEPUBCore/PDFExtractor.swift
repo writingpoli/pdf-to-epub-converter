@@ -116,6 +116,12 @@ public final class PDFExtractor {
                     let text = (attributed.string as NSString).substring(with: range)
                     let font = attrs[.font] as? NSFont
                     let traits = Self.traits(of: font)
+                    if let font {
+                        let letters = text.filter { !$0.isWhitespace }.count
+                        self.fonts[font.fontName, default: FontReport(name: font.fontName, characters: 0,
+                                                                      bold: traits.bold, italic: traits.italic)]
+                            .characters += letters
+                    }
                     let raised = (attrs[NSAttributedString.Key("NSSuperScript")] as? Int ?? 0) > 0
                         || (attrs[.baselineOffset] as? Double ?? 0) > 0.5
                     runs.append(TextRun(text: text, bold: traits.bold, italic: traits.italic,
@@ -216,14 +222,25 @@ public final class PDFExtractor {
         return !t.isEmpty && t.count <= 3 && (t.allSatisfy(\.isNumber) || t.allSatisfy { "*†‡§¶".contains($0) })
     }
 
+    /// Bold and italic, from what the font declares, from its design (slant
+    /// angle and weight), or failing those from its name ("MinionPro-It").
     static func traits(of font: NSFont?) -> (bold: Bool, italic: Bool) {
         guard let font else { return (false, false) }
         let symbolic = font.fontDescriptor.symbolicTraits
-        let name = font.fontName.lowercased()
-        let bold = symbolic.contains(.bold) || ["bold", "black", "heavy", "semibold", "demi"].contains { name.contains($0) }
-        let italic = symbolic.contains(.italic) || name.contains("italic") || name.contains("oblique")
-        return (bold, italic)
+        let named = FontStyle.parse(font.fontName)
+        let ctFont = font as CTFont
+        let slanted = abs(CTFontGetSlantAngle(ctFont)) > 4
+        var heavy = false
+        if let traits = CTFontCopyTraits(ctFont) as? [CFString: Any],
+           let weight = (traits[kCTFontWeightTrait] as? NSNumber)?.doubleValue {
+            heavy = weight >= 0.3
+        }
+        return (symbolic.contains(.bold) || heavy || named.bold,
+                symbolic.contains(.italic) || slanted || named.italic)
     }
+
+    /// Every font met so far, with how its style was read.
+    public private(set) var fonts: [String: FontReport] = [:]
 
     // MARK: - Scanned pages
 

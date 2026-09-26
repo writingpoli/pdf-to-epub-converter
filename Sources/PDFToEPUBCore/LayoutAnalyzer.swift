@@ -42,6 +42,7 @@ public struct LayoutAnalyzer {
             .map(Self.cleaned)
             .filter { !$0.text.trimmingCharacters(in: .whitespaces).isEmpty }
         lines = Self.mergeFragments(lines)
+        lines = Self.clearImplausibleEmphasis(lines)
 
         let bodySize = Self.bodyFontSize(lines)
         var printedPageNumbers: [Int: String] = [:]
@@ -160,6 +161,34 @@ public struct LayoutAnalyzer {
             result.append(contentsOf: merged)
         }
         return result
+    }
+
+    /// Emphasis marks a minority of the text. If most of it reads as bold or
+    /// italic, the fonts misreported their style; drop it rather than set the
+    /// whole book in bold or italics.
+    static func clearImplausibleEmphasis(_ lines: [TextLine]) -> [TextLine] {
+        var total = 0, bold = 0, italic = 0
+        for line in lines {
+            for run in line.runs {
+                let letters = run.text.filter(\.isLetter).count
+                total += letters
+                if run.bold { bold += letters }
+                if run.italic { italic += letters }
+            }
+        }
+        let clearBold = total > 500 && Double(bold) > Double(total) * 0.6
+        let clearItalic = total > 500 && Double(italic) > Double(total) * 0.6
+        guard clearBold || clearItalic else { return lines }
+        return lines.map { line in
+            var line = line
+            line.runs = line.runs.map { run in
+                var run = run
+                if clearBold { run.bold = false }
+                if clearItalic { run.italic = false }
+                return run
+            }
+            return line
+        }
     }
 
     /// Whether `marker` is a note number or symbol set smaller than `text`,
