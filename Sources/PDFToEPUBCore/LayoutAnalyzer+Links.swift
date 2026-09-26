@@ -273,9 +273,11 @@ extension LayoutAnalyzer {
             var copy = block
             if let runs = block.block.runs {
                 copy.block = block.block.withRuns(runs.map { run in
-                    guard let link = run.link, case .page = link else { return run }
+                    guard let link = run.link, case .page(let target, _) = link else { return run }
                     var run = run
-                    run.link = anchorFor[link].map { .anchor($0) }
+                    // A note marker points ahead to its note. One that points back
+                    // (PDFs sometimes send these to the front of the book) is wrong.
+                    run.link = run.superscript && target < block.page ? nil : anchorFor[link].map { .anchor($0) }
                     return run
                 })
             }
@@ -358,11 +360,21 @@ extension LayoutAnalyzer {
         }
         guard notes.count >= 2 else { return }
 
-        // Superscript numbers in the chapters before the notes.
+        // Superscript numbers in the chapters before the notes. Matching them
+        // here beats a link from the PDF that doesn't lead into the notes.
+        var notesIDs = Set<String>()
+        for block in chapters[notesIndex].blocks {
+            if case .anchor(let id) = block { notesIDs.insert(id) }
+        }
+        func replaceable(_ link: Link?) -> Bool {
+            guard let link else { return true }
+            if case .anchor(let id) = link { return !id.hasPrefix("fn") && !notesIDs.contains(id) }
+            return false
+        }
         var refs: [Int: [(block: Int, run: Int, number: Int)]] = [:]
         for c in 0..<notesIndex {
             for (b, block) in chapters[c].blocks.enumerated() {
-                for (r, run) in (block.runs ?? []).enumerated() where run.superscript && run.link == nil {
+                for (r, run) in (block.runs ?? []).enumerated() where run.superscript && replaceable(run.link) {
                     if let n = Int(run.text.trimmingCharacters(in: .whitespaces)) {
                         refs[c, default: []].append((b, r, n))
                     }
@@ -406,7 +418,7 @@ extension LayoutAnalyzer {
             for c in chaptersToSearch {
                 for ref in refs[c] ?? [] where ref.number == note.number {
                     var runs = chapters[c].blocks[ref.block].runs ?? []
-                    guard ref.run < runs.count, runs[ref.run].link == nil else { continue }
+                    guard ref.run < runs.count, replaceable(runs[ref.run].link) else { continue }
                     runs[ref.run].link = .anchor(id)
                     if firstRef { runs[ref.run].id = refID }
                     chapters[c].blocks[ref.block] = chapters[c].blocks[ref.block].withRuns(runs)

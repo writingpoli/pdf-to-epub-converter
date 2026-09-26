@@ -80,6 +80,15 @@ final class ConversionTests: XCTestCase {
         has("id=\"en2-1\"")
         XCTAssertEqual(text.components(separatedBy: "epub:type=\"noteref\"").count - 1, 4,
                        "one footnote and three endnote references", file: file, line: line)
+        // Every note reference leads to a note (the bookmarked PDF points three at the contents page).
+        let noteHrefs = text.components(separatedBy: "epub:type=\"noteref\" href=\"").dropFirst()
+            .map { $0.prefix { $0 != "\"" } }
+        for href in noteHrefs {
+            XCTAssertTrue(href.contains("#fn") || href.contains("#en"), "note links to \(href)", file: file, line: line)
+        }
+        // A bold section heading at body size is a heading of its own.
+        XCTAssertNotNil(text.range(of: "<h[1-3][^>]*>A Long and a Sad Tale</h[1-3]>", options: .regularExpression),
+                        "section heading", file: file, line: line)
     }
 
     /// Layout tools often share one resource list between every page and every

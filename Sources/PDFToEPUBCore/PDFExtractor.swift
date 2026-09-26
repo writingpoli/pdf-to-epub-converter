@@ -110,6 +110,7 @@ public final class PDFExtractor {
             var runs: [TextRun] = []
             var runSizes: [Double?] = []
             var sizeWeights: [Double: Int] = [:]
+            var familyWeights: [String: Int] = [:]
             if let attributed = lineSelection.attributedString, attributed.length > 0 {
                 attributed.enumerateAttributes(in: NSRange(location: 0, length: attributed.length), options: []) { attrs, range, _ in
                     let text = (attributed.string as NSString).substring(with: range)
@@ -120,6 +121,9 @@ public final class PDFExtractor {
                     runs.append(TextRun(text: text, bold: traits.bold, italic: traits.italic,
                                         superscript: raised && Self.isMarkerText(text)))
                     runSizes.append(font.map { Double($0.pointSize) })
+                    if let family = font?.familyName {
+                        familyWeights[family, default: 0] += text.filter { !$0.isWhitespace }.count
+                    }
                     if let font, font.pointSize > 1 {
                         let letters = text.filter { !$0.isWhitespace }.count
                         sizeWeights[Double(font.pointSize), default: 0] += max(1, letters)
@@ -145,8 +149,10 @@ public final class PDFExtractor {
                                   y: Double(box.maxY - bounds.maxY),
                                   width: Double(bounds.width), height: Double(bounds.height),
                                   fontSize: fontSize,
-                                  pageWidth: Double(box.width), pageHeight: Double(box.height)))
+                                  pageWidth: Double(box.width), pageHeight: Double(box.height),
+                                  fontName: familyWeights.max { $0.value < $1.value }?.key))
         }
+        for i in lines.indices { lines[i].runs.markAttachedNoteMarkers() }
         addLinks(on: page, box: box, to: &lines)
         return lines
     }

@@ -328,10 +328,15 @@ public struct LayoutAnalyzer {
         var rightEdge: [Int: Double] = [:]
         var usesIndents = false
         var usesGaps = false
+        /// The typeface of the body text, when known.
+        var bodyFont: String?
 
         init(lines: [TextLine], bodySize: Double) {
             self.bodySize = bodySize
             let body = lines.filter { abs($0.fontSize - bodySize) <= max(0.6, bodySize * 0.08) }
+            var fonts: [String: Int] = [:]
+            for line in body { if let font = line.fontName { fonts[font, default: 0] += line.text.count } }
+            bodyFont = fonts.max { $0.value < $1.value }?.key
 
             var deltas: [Double] = []
             for (a, b) in zip(body, body.dropFirst()) where a.page == b.page {
@@ -599,6 +604,11 @@ public struct LayoutAnalyzer {
     }
 
     /// Returns a ranking size when the line looks like a heading.
+    ///
+    /// Chapter titles are usually set big. Section headings inside a chapter
+    /// are often body-sized but set apart: bold, capitals, italics or another
+    /// typeface, with extra space above. The size returned ranks them (and so
+    /// their heading level) below bigger headings.
     func headingSize(_ line: TextLine, text: String, gapBefore: Double, gapAfter: Double,
                      metrics m: PageMetrics) -> Double? {
         let body = m.bodySize
@@ -606,16 +616,25 @@ public struct LayoutAnalyzer {
         if line.fontSize >= body * 1.18 {
             return line.fontSize
         }
-        let isolatedAbove = gapBefore > m.lineSpacing * 1.8
-        let isolatedBelow = gapAfter > m.lineSpacing * 1.6
-        if text.count <= 60, isolatedAbove, isolatedBelow || gapAfter == .infinity,
+        let spaceAbove = gapBefore > m.lineSpacing * 1.45
+        let spaceBelow = gapAfter > m.lineSpacing * 1.25 || gapAfter == .infinity
+        if text.count <= 60, gapBefore > m.lineSpacing * 1.8, spaceBelow,
            Self.matches(Self.chapterWordPattern, text) {
             return max(line.fontSize, body * 1.5)
         }
-        if line.isBold, text.count <= 90, isolatedAbove, isolatedBelow,
-           let last = text.last, !".,;".contains(last) {
-            return body * 1.1
+
+        // Section headings: short, not a sentence, with space above (or below,
+        // when they open a page), and set differently from the text.
+        guard text.count <= 90, let last = text.last, !".,;:".contains(last),
+              spaceAbove || (gapBefore == .infinity && spaceBelow) else { return nil }
+        if line.fontSize >= body * 1.08 {
+            return line.fontSize
         }
+        let otherFont = line.fontName != nil && m.bodyFont != nil && line.fontName != m.bodyFont
+        if line.isBold { return body * 1.1 }
+        if otherFont { return body * 1.08 }
+        if line.isAllCaps { return body * 1.06 }
+        if line.isItalic && spaceBelow { return body * 1.04 }
         return nil
     }
 

@@ -238,3 +238,95 @@ final class LinkTests: XCTestCase {
         XCTAssertEqual(writer.inline([TextRun(text: "site", link: .url("javascript:alert(1)"))]), "site")
     }
 }
+
+final class SectionHeadingTests: XCTestCase {
+    /// A page of indented body text with one candidate line in the middle,
+    /// set with extra space above it and ordinary spacing below.
+    func analyze(_ candidate: TextLine) -> [Block] {
+        var lines: [TextLine] = []
+        var y = 60.0
+        func body(_ i: Int, font: String = "Minion") {
+            lines.append(TextLine(runs: [TextRun(text: "Body text line \(i) runs all the way across the measure here")],
+                                  page: 0, x: i % 4 == 0 ? 66 : 50, y: y, width: i % 4 == 0 ? 304 : 320, height: 12.6,
+                                  fontSize: 11, pageWidth: 420, pageHeight: 595, fontName: font))
+            y += 14
+        }
+        for i in 0..<8 { body(i) }
+        y += 12
+        var line = candidate
+        line.y = y
+        lines.append(line)
+        y += 16
+        for i in 8..<16 { body(i) }
+        return LayoutAnalyzer().analyze(lines: lines).flatMap(\.blocks)
+    }
+
+    func candidate(_ text: String, bold: Bool = false, italic: Bool = false, font: String = "Minion",
+                   size: Double = 11, width: Double = 150) -> TextLine {
+        TextLine(runs: [TextRun(text: text, bold: bold, italic: italic)], page: 0, x: 50, y: 0, width: width,
+                 height: size * 1.15, fontSize: size, pageWidth: 420, pageHeight: 595, fontName: font)
+    }
+
+    func headingTexts(_ blocks: [Block]) -> [String] {
+        blocks.compactMap { if case .heading(_, let runs) = $0 { return runs.joinedText } else { return nil } }
+    }
+
+    func testBoldSectionHeadingAtBodySize() {
+        XCTAssertEqual(headingTexts(analyze(candidate("The Road North", bold: true))), ["The Road North"])
+    }
+
+    func testCapitalsSectionHeading() {
+        XCTAssertEqual(headingTexts(analyze(candidate("THE ROAD NORTH"))), ["THE ROAD NORTH"])
+    }
+
+    func testDifferentTypefaceSectionHeading() {
+        XCTAssertEqual(headingTexts(analyze(candidate("The Road North", font: "Gill Sans"))), ["The Road North"])
+    }
+
+    func testSlightlyLargerSectionHeading() {
+        XCTAssertEqual(headingTexts(analyze(candidate("The Road North", size: 12.5))), ["The Road North"])
+    }
+
+    func testSentencesAreNotHeadings() {
+        XCTAssertEqual(headingTexts(analyze(candidate("He left at dawn.", bold: true))), [])
+        XCTAssertEqual(headingTexts(analyze(candidate("An ordinary short line"))), [])
+        XCTAssertEqual(headingTexts(analyze(candidate(String(repeating: "Bold words ", count: 10), bold: true,
+                                                      width: 320))), [])
+    }
+
+    func testHeadingIsItsOwnBlockBetweenParagraphs() {
+        let blocks = analyze(candidate("The Road North", bold: true))
+        guard let at = blocks.firstIndex(where: { if case .heading = $0 { return true } else { return false } }) else {
+            return XCTFail("no heading")
+        }
+        guard case .paragraph(let before, _) = blocks[at - 1], case .paragraph(let after, _) = blocks[at + 1] else {
+            return XCTFail("heading should sit between paragraphs")
+        }
+        XCTAssertTrue(before.joinedText.hasSuffix("line 7 runs all the way across the measure here"))
+        XCTAssertTrue(after.joinedText.hasPrefix("Body text line 8"))
+    }
+}
+
+extension LinkTests {
+    /// Some PDFs link note markers to the front of the book. Those links are
+    /// dropped, and the marker is matched to its endnote instead.
+    func testNoteMarkerLinkingBackwardsIsReplacedByItsEndnote() {
+        var lines: [TextLine] = [
+            line("Contents", page: 0, y: 60, x: 170, width: 80, size: 16),
+            line("One ........ 2", page: 0, y: 110),
+            line("Notes ........ 3", page: 0, y: 124),
+            line("Another ........ 3", page: 0, y: 138),
+            line("One", page: 1, y: 80, x: 190, width: 40, size: 18),
+        ]
+        lines.append(line([TextRun(text: "A sentence that cites a source, long enough to fill"),
+                           TextRun(text: "1", link: .page(0, y: 60))], page: 1, y: 130, x: 66))
+        lines.append(line("Notes", page: 2, y: 80, x: 180, width: 60, size: 18))
+        lines.append(line("1. The source, cited in chapter one.", page: 2, y: 130, width: 200))
+        lines.append(line("2. Another note that nothing cites.", page: 2, y: 144, width: 200))
+
+        let chapters = LayoutAnalyzer().analyze(lines: lines)
+        let ref = allRuns(chapters).first { $0.superscript }
+        XCTAssertEqual(ref?.link, .anchor("en1-1"))
+        assertLinksResolve(chapters)
+    }
+}

@@ -4,8 +4,10 @@
 It has the things that make real book PDFs awkward to reflow: a picture
 cover, a printed contents page, running heads that change per chapter, page
 numbers, justified and hyphenated text with first-line indents, italics, a
-scene break, an illustration plate, a footnote, endnotes and PDF bookmarks.
-The bookmarked version's contents entries are also clickable links.
+scene break, a bold section heading, an illustration plate, a footnote,
+endnotes and PDF bookmarks. The bookmarked version's contents entries are
+clickable links, and its endnote markers link (wrongly, as some real PDFs
+do) to the contents page.
 
     pip install reportlab pyphen
     python3 scripts/make_sample_pdf.py Tests/Fixtures/alice-sample.pdf
@@ -13,6 +15,7 @@ The bookmarked version's contents entries are also clickable links.
 """
 import argparse
 import io
+import re
 
 from reportlab.lib.enums import TA_CENTER, TA_JUSTIFY
 from reportlab.lib.pagesizes import A5
@@ -53,6 +56,7 @@ CHAPTERS = [
     ("CHAPTER III.", "A Caucus-Race and a Long Tale", [
         "They were indeed a queer-looking party that assembled on the bank—the birds with draggled feathers, the animals with their fur clinging close to them, and all dripping wet, cross, and uncomfortable.<super>1</super>",
         "The first question of course was, how to get dry again: they had a consultation about this, and after a few minutes it seemed quite natural to Alice to find herself talking familiarly with them, as if she had known them all her life. Indeed, she had quite a long argument with the Lory, who at last turned sulky, and would only say, “I am older than you, and must know better;” and this Alice would not allow without knowing how old it was, and, as the Lory positively refused to tell its age, there was no more to be said.",
+        "SECTION:A Long and a Sad Tale",
         "At last the Mouse, who seemed to be a person of authority among them, called out, “Sit down, all of you, and listen to me! <i>I’ll</i> soon make you dry enough!” They all sat down at once, in a large ring, with the Mouse in the middle. Alice kept her eyes anxiously fixed on it, for she felt sure she would catch a bad cold if she did not get dry very soon.",
         "“Ahem!” said the Mouse with an important air, “are you all ready? This is the driest thing I know. Silence all round, if you please! ‘William the Conqueror, whose cause was favoured by the pope, was soon submitted to by the English, who wanted leaders, and had been of late much accustomed to usurpation and conquest. Edwin and Morcar, the earls of Mercia and Northumbria—’”",
         "“Ugh!” said the Lory, with a shiver.",
@@ -120,6 +124,7 @@ def build(path, bookmarks=True):
     notes_heading = ParagraphStyle("NotesHeading", fontName="Times-Bold", fontSize=12, leading=15,
                                    spaceBefore=14, spaceAfter=6)
     note = ParagraphStyle("Note", parent=body, firstLineIndent=0, spaceAfter=4)
+    section = ParagraphStyle("Section", fontName="Times-Bold", fontSize=11, leading=14.5, spaceBefore=11)
     footnote = ParagraphStyle("Footnote", fontName="Times-Roman", fontSize=9, leading=11, alignment=TA_JUSTIFY)
 
     state = {"chapter": TITLE, "number": ""}
@@ -142,6 +147,8 @@ def build(path, bookmarks=True):
                     self.canv.bookmarkPage(key, fit="XYZ", top=self.frame._y + flowable.height + 60)
                     self.canv.addOutlineEntry(entry, key, level=0)
                 self.notify("TOCEntry", (0, entry, self.page, key if bookmarks else None))
+            elif name == "ContentsTitle" and bookmarks:
+                self.canv.bookmarkPage("contents")
             elif name == "ChapterNumber":
                 state["number"] = flowable.getPlainText()
             elif "get out again" in flowable.getPlainText():
@@ -206,8 +213,16 @@ def build(path, bookmarks=True):
         for i, text in enumerate(paragraphs):
             if text == "SCENE":
                 story.append(Paragraph("*   *   *", scene))
+            elif text.startswith("SECTION:"):
+                story.append(Paragraph(text[len("SECTION:"):], section))
             else:
-                story.append(Paragraph(text, first if i == 0 or paragraphs[i - 1] == "SCENE" else body))
+                if bookmarks and index > 0:
+                    # Like some real PDFs, point the note markers at the wrong place:
+                    # the contents page. The converter should link them to the notes.
+                    text = re.sub(r"<super>(\d)</super>", r'<a href="#contents"><super>\1</super></a>', text)
+                previous = paragraphs[i - 1] if i else ""
+                story.append(Paragraph(text, first if i == 0 or previous == "SCENE" or previous.startswith("SECTION:")
+                                       else body))
         if index == 0:
             story += [PageBreak(), Spacer(1, 60),
                       Image(picture_png(300, 220, "The White Rabbit"), width=110 * mm, height=80 * mm),

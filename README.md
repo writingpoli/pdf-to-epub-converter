@@ -11,6 +11,7 @@ A PDF is a set of fixed pages. In Books that means pinching and scrolling, and y
 - **Removes page furniture**: page numbers, plus running heads such as the book or chapter title at the top of each page.
 - **Finds chapters** from the PDF's bookmarks. If there are none, it finds them from headings: bigger type, or lines such as “Chapter 3” or “Prologue”. You get a working table of contents in Books.
 - **Links things up.** A printed contents page becomes a list of links to the chapters, with the page numbers removed. Footnotes leave the flow of the text and open as pop-up notes in Books from their superscript markers, with a link back. Endnotes in a Notes section link both ways too, even when they're numbered afresh for each chapter. Any links the PDF already has, including web links, are kept.
+- **Finds section headings** inside chapters, whether they're set larger, in bold, in capitals, or in another typeface, and gives them their own spacing.
 - **Keeps italics and bold**, scene breaks (`* * *` or a large gap), and drop caps (a large first letter gets reattached to its word).
 - **Makes a cover** from the first page.
 - **Reads scanned books** with macOS's built-in text recognition (Vision) when a page holds only a picture of text.

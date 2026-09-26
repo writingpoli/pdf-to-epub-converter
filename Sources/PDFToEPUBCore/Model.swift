@@ -120,9 +120,12 @@ public struct TextLine: Codable, Equatable {
     public var fontSize: Double
     public var pageWidth: Double
     public var pageHeight: Double
+    /// The typeface family most of the line is set in, when known.
+    public var fontName: String?
 
     public init(runs: [TextRun], page: Int, x: Double, y: Double, width: Double, height: Double,
-                fontSize: Double, pageWidth: Double, pageHeight: Double) {
+                fontSize: Double, pageWidth: Double, pageHeight: Double, fontName: String? = nil) {
+        self.fontName = fontName
         self.runs = runs
         self.page = page
         self.x = x
@@ -137,6 +140,15 @@ public struct TextLine: Codable, Equatable {
     public var text: String { runs.map(\.text).joined() }
     public var maxX: Double { x + width }
     public var maxY: Double { y + height }
+    public var isItalic: Bool {
+        let letters = runs.filter { $0.text.contains(where: \.isLetter) }
+        return !letters.isEmpty && letters.allSatisfy(\.italic)
+    }
+    /// Set in capitals, like "THE LONG WAY HOME".
+    public var isAllCaps: Bool {
+        let letters = text.filter(\.isLetter)
+        return letters.count >= 3 && letters.allSatisfy(\.isUppercase)
+    }
     public var isBold: Bool {
         let letters = runs.filter { $0.text.contains(where: \.isLetter) }
         return !letters.isEmpty && letters.allSatisfy(\.bold)
