@@ -102,6 +102,20 @@ final class ConversionTests: XCTestCase {
         XCTAssertTrue(text.contains("shares its resources"), text)
     }
 
+    /// Fonts whose names don't give their style away (as in InDesign books,
+    /// where PDFKit may also report everything as Helvetica): emphasis comes
+    /// from the fonts' descriptors and from how the text is drawn.
+    func testEmphasisFromEmbeddedFonts() throws {
+        let (_, text, _) = try convert("embedded-fonts.pdf") { $0.includeCover = false }
+        XCTAssertTrue(text.contains("<em>italics</em>"), "italic font\n\(text)")
+        XCTAssertTrue(text.contains("<em>slanted</em>"), "regular font drawn slanted")
+        XCTAssertTrue(text.contains("<strong>bold</strong>"), "bold font")
+        XCTAssertTrue(text.contains("<strong>outlined</strong>"), "regular font drawn outlined")
+        XCTAssertNotNil(text.range(of: "<h[1-3][^>]*>A Section at Body Size</h[1-3]>", options: .regularExpression),
+                        "bold section heading at body size")
+        XCTAssertFalse(text.contains("<strong>The first paragraph"), "body text stays regular")
+    }
+
     func testTitleAndAuthorOverrides() throws {
         let (_, text, _) = try convert("alice-sample.pdf") { options in
             options.title = "My Title"

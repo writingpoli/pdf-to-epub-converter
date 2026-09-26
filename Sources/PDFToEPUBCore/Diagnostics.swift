@@ -77,6 +77,12 @@ public enum Diagnostics {
         for index in max(0, pageNumber - 2)...min(document.pageCount - 1, pageNumber) {
             if let p = document.page(at: index) { lines += extractor.textLines(on: p, index: index) }
         }
+        out += "\nFonts in these pages' drawing instructions (name | characters | read as):\n"
+        if extractor.drawnFonts.isEmpty { out += "  none matched\n" }
+        for font in extractor.drawnFonts.values.sorted(by: { $0.characters > $1.characters }) {
+            let readAs = [font.bold ? "bold" : nil, font.italic ? "italic" : nil].compactMap { $0 }
+            out += "  \(font.name) | \(font.characters) | \(readAs.isEmpty ? "regular" : readAs.joined(separator: " "))\n"
+        }
         out += "\nConverter's reading of pages \(max(1, pageNumber - 1))–\(min(document.pageCount, pageNumber + 1)):\n"
         for chapter in LayoutAnalyzer().analyze(lines: lines) {
             for block in chapter.blocks {

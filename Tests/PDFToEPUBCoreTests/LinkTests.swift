@@ -330,3 +330,30 @@ extension LinkTests {
         assertLinksResolve(chapters)
     }
 }
+
+final class BulletTests: XCTestCase {
+    func testBulletedLinesAreItemsNotHeadings() {
+        var lines: [TextLine] = []
+        var y = 60.0
+        for i in 0..<5 {
+            lines.append(TextLine(runs: [TextRun(text: "An introductory sentence number \(i) that runs across")],
+                                  page: 0, x: i == 0 ? 66 : 50, y: y, width: i == 0 ? 304 : 320, height: 11.5,
+                                  fontSize: 10, pageWidth: 420, pageHeight: 595))
+            y += 13
+        }
+        for item in ["first item that is long enough to wrap onto", "second item", "third item"] {
+            // The bullet arrives as its own larger fragment, drawn twice.
+            lines.append(TextLine(runs: [TextRun(text: "●●")], page: 0, x: 60, y: y - 1, width: 8, height: 14,
+                                  fontSize: 14, pageWidth: 420, pageHeight: 595))
+            lines.append(TextLine(runs: [TextRun(text: item)], page: 0, x: 72, y: y, width: 250, height: 11.5,
+                                  fontSize: 10, pageWidth: 420, pageHeight: 595))
+            y += 13
+        }
+        let blocks = LayoutAnalyzer().analyze(lines: lines).flatMap(\.blocks)
+        XCTAssertFalse(blocks.contains { if case .heading = $0 { return true } else { return false } }, "\(blocks)")
+        let items = blocks.compactMap { b -> String? in
+            if case .paragraph(let runs, _) = b, runs.joinedText.hasPrefix("●") { return runs.joinedText } else { return nil }
+        }
+        XCTAssertEqual(items, ["● first item that is long enough to wrap onto", "● second item", "● third item"])
+    }
+}

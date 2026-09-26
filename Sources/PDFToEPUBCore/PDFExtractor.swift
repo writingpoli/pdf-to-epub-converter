@@ -100,6 +100,8 @@ public final class PDFExtractor {
     func textLines(on page: PDFPage, index: Int) -> [TextLine] {
         let box = page.bounds(for: .cropBox)
         guard let selection = page.selection(for: box) else { return [] }
+        let fontMap = PDFFontMap(page: page)
+        let pageText = (page.string ?? "") as NSString
         var lines: [TextLine] = []
         for lineSelection in selection.selectionsByLine() {
             guard let string = lineSelection.string,
@@ -150,17 +152,116 @@ public final class PDFExtractor {
                 if Self.isMarkerText(runs[i].text) { runs[i].superscript = true }
             }
 
+            var fontName = familyWeights.max { $0.value < $1.value }?.key
+            // PDFKit can report stand-in fonts (a whole book in "Helvetica");
+            // the page's own drawing instructions say which font really drew what.
+            if let real = realFonts(for: string, bounds: bounds, page: page, pageText: pageText, map: fontMap) {
+                runs = real.runs
+                fontSize = real.size
+                fontName = real.family
+            }
+
             lines.append(TextLine(runs: runs, page: index,
                                   x: Double(bounds.minX - box.minX),
                                   y: Double(box.maxY - bounds.maxY),
                                   width: Double(bounds.width), height: Double(bounds.height),
                                   fontSize: fontSize,
                                   pageWidth: Double(box.width), pageHeight: Double(box.height),
-                                  fontName: familyWeights.max { $0.value < $1.value }?.key))
+                                  fontName: fontName))
         }
         for i in lines.indices { lines[i].runs.markAttachedNoteMarkers() }
         addLinks(on: page, box: box, to: &lines)
         return lines
+    }
+
+    /// Fonts found in the pages' drawing instructions, with how each was read.
+    public private(set) var drawnFonts: [String: FontReport] = [:]
+
+    /// Rebuilds a line's styled runs from the fonts that really drew each
+    /// character. Returns nil when too little of the line can be matched up.
+    func realFonts(for text: String, bounds: CGRect, page: PDFPage, pageText: NSString,
+                   map: PDFFontMap) -> (runs: [TextRun], size: Double, family: String?)? {
+        guard !map.spans.isEmpty else { return nil }
+        let line = text.trimmingCharacters(in: .newlines) as NSString
+        guard line.length > 0, pageText.length >= line.length else { return nil }
+
+        // Where the line sits in the page's text, to ask for each character's position.
+        let hint = page.characterIndex(at: CGPoint(x: bounds.minX + 1, y: bounds.midY))
+        var start = NSNotFound
+        if hint >= 0, hint + line.length <= pageText.length,
+           pageText.substring(with: NSRange(location: hint, length: line.length)) == line as String {
+            start = hint
+        } else {
+            let center = hint >= 0 ? hint : 0
+            let lo = hint >= 0 ? max(0, center - 600) : 0
+            let hi = hint >= 0 ? min(pageText.length, center + 600 + line.length) : pageText.length
+            start = pageText.range(of: line as String, options: [.literal],
+                                   range: NSRange(location: lo, length: hi - lo)).location
+        }
+        guard start != NSNotFound else { return nil }
+
+        struct Style: Equatable {
+            var bold: Bool
+            var italic: Bool
+            var raised: Bool
+        }
+        var spans: [PDFFontMap.Span?] = []
+        var letters = 0, matched = 0
+        for k in 0..<line.length {
+            let unit = line.character(at: k)
+            if unit == 32 || unit == 9 || unit == 0xA0 {
+                spans.append(nil)
+                continue
+            }
+            letters += 1
+            let r = page.characterBounds(at: start + k)
+            let span = r.isEmpty && r.origin == .zero ? nil : map.span(at: CGPoint(x: r.midX, y: r.midY))
+            if span != nil { matched += 1 }
+            spans.append(span)
+        }
+        guard letters > 0, Double(matched) >= Double(letters) * 0.8 else { return nil }
+
+        // The line's main size, baseline and typeface.
+        var sizes: [Double: Int] = [:], families: [String: Int] = [:], baselines: [Double: Int] = [:]
+        for span in spans.compactMap({ $0 }) {
+            sizes[(span.size * 2).rounded() / 2, default: 0] += 1
+            families[PDFFontMap.family(of: span.font.name), default: 0] += 1
+            baselines[span.baseline.rounded(), default: 0] += 1
+            let style = (span.font.bold || span.outlined, span.font.italic || span.slanted)
+            drawnFonts[span.font.name, default: FontReport(name: span.font.name, characters: 0,
+                                                           bold: style.0, italic: style.1)].characters += 1
+        }
+        guard let size = sizes.max(by: { $0.value < $1.value })?.key,
+              let baseline = baselines.max(by: { $0.value < $1.value })?.key else { return nil }
+
+        // Group characters into runs of one style. Spaces and unmatched
+        // characters take the style of what comes before them.
+        var styles: [Style?] = spans.map { span in
+            guard let span else { return nil }
+            let raised = span.rise > 0.5
+                || (span.size < size * 0.85 && span.baseline > baseline + size * 0.15)
+            return Style(bold: span.font.bold || span.outlined, italic: span.font.italic || span.slanted, raised: raised)
+        }
+        if let first = styles.firstIndex(where: { $0 != nil }) {
+            for i in 0..<first { styles[i] = styles[first] }
+        }
+        for i in styles.indices where styles[i] == nil && i > 0 { styles[i] = styles[i - 1] }
+        // A space between two runs of the same style belongs to that style.
+        for i in styles.indices where i > 0 && i + 1 < styles.count && spans[i] == nil
+            && styles[i - 1] != styles[i + 1] && styles[i + 1] != nil {
+            styles[i] = styles[i - 1]
+        }
+
+        var runs: [TextRun] = []
+        var runStart = 0
+        for i in 1...styles.count where i == styles.count || styles[i] != styles[runStart] {
+            let piece = line.substring(with: NSRange(location: runStart, length: i - runStart))
+            let style = styles[runStart] ?? Style(bold: false, italic: false, raised: false)
+            runs.append(TextRun(text: piece, bold: style.bold, italic: style.italic,
+                                superscript: style.raised && Self.isMarkerText(piece)))
+            runStart = i
+        }
+        return (runs, size, families.max(by: { $0.value < $1.value })?.key)
     }
 
     /// Carries the PDF's own links (contents entries, note references, web

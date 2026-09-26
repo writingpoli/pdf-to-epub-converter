@@ -105,6 +105,15 @@ public struct LayoutAnalyzer {
             line.runs[last].text = String(t[..<(t.lastIndex(where: { $0 != " " }).map { t.index(after: $0) } ?? t.startIndex)])
         }
         line.runs = line.runs.filter { !$0.text.isEmpty }
+        // A bullet drawn twice (a common way to make it darker) is one bullet.
+        if let first = line.runs.first?.text.first, bullets.contains(first) {
+            var text = line.runs[0].text
+            while text.count > 1, text.dropFirst().first == first { text.removeFirst() }
+            if text.dropFirst().first.map({ !$0.isWhitespace }) ?? false {
+                text.insert(" ", at: text.index(after: text.startIndex))
+            }
+            line.runs[0].text = text
+        }
         line.runs.markAttachedNoteMarkers()
         return line
     }
@@ -151,7 +160,11 @@ public struct LayoutAnalyzer {
                         last.y = min(last.y, line.y)
                         last.width = newMaxX - last.x
                         last.height = newMaxY - last.y
-                        last.fontSize = max(last.fontSize, line.fontSize)
+                        // The size of the text, not of a bullet or ornament beside it.
+                        let lastLetters = last.text.filter(\.isLetter).count
+                        let lineLetters = line.text.filter(\.isLetter).count
+                        last.fontSize = lineLetters > lastLetters ? line.fontSize : last.fontSize
+                        if lineLetters > lastLetters { last.fontName = line.fontName }
                         merged[merged.count - 1] = last
                         continue
                     }
@@ -450,6 +463,12 @@ public struct LayoutAnalyzer {
         pattern: #"^(chapter|part|book|prologue|epilogue|introduction|preface|foreword|afterword|acknowledg(e)?ments?|appendix|interlude|contents|table of contents|notes|bibliography|index|dedication|about the author)\b"#,
         options: [.caseInsensitive])
 
+    static let bullets: Set<Character> = ["•", "●", "▪", "■", "◆", "◦", "○", "‣", "⁃", "➢", "➤", "✓", "✔", "❖", "►"]
+
+    static func startsWithBullet(_ text: String) -> Bool {
+        text.drop(while: \.isWhitespace).first.map { bullets.contains($0) } ?? false
+    }
+
     static let numberedItemPattern = try! NSRegularExpression(pattern: #"^\s*\d{1,3}[.)]\s+\S"#)
 
     static let backMatterPattern = try! NSRegularExpression(
@@ -562,7 +581,9 @@ public struct LayoutAnalyzer {
                     let lIndented = lIndent > body * 0.6
                     let pIndented = pIndent > body * 0.6
 
-                    if p.page == line.page {
+                    if Self.startsWithBullet(line.text) {
+                        startsNew = true
+                    } else if p.page == line.page {
                         let gap = line.y - p.y
                         if gap > spacing * 1.4 {
                             startsNew = true
@@ -641,7 +662,7 @@ public struct LayoutAnalyzer {
     func headingSize(_ line: TextLine, text: String, gapBefore: Double, gapAfter: Double,
                      metrics m: PageMetrics) -> Double? {
         let body = m.bodySize
-        guard text.count <= 160, text.contains(where: \.isLetter) else { return nil }
+        guard text.count <= 160, text.contains(where: \.isLetter), !Self.startsWithBullet(text) else { return nil }
         if line.fontSize >= body * 1.18 {
             return line.fontSize
         }
