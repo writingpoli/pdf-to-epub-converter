@@ -143,105 +143,105 @@ final class PDFFontMap {
 
     private static func register(_ table: CGPDFOperatorTableRef) {
         CGPDFOperatorTableSetCallback(table, "q") { _, info in
-            guard let s = state(info) else { return }
+            guard let s = PDFFontMap.state(info) else { return }
             s.stack.append((s.ctm, s.text))
         }
         CGPDFOperatorTableSetCallback(table, "Q") { _, info in
-            guard let s = state(info), let (ctm, text) = s.stack.popLast() else { return }
+            guard let s = PDFFontMap.state(info), let (ctm, text) = s.stack.popLast() else { return }
             s.ctm = ctm
             s.text = text
         }
         CGPDFOperatorTableSetCallback(table, "cm") { scanner, info in
-            guard let s = state(info), let m = popMatrix(scanner) else { return }
+            guard let s = PDFFontMap.state(info), let m = PDFFontMap.popMatrix(scanner) else { return }
             s.ctm = m.concatenating(s.ctm)
         }
         CGPDFOperatorTableSetCallback(table, "BT") { _, info in
-            guard let s = state(info) else { return }
+            guard let s = PDFFontMap.state(info) else { return }
             s.tm = .identity
             s.tlm = .identity
         }
         CGPDFOperatorTableSetCallback(table, "Tc") { scanner, info in
-            guard let s = state(info), let v = pop(scanner) else { return }
+            guard let s = PDFFontMap.state(info), let v = PDFFontMap.pop(scanner) else { return }
             s.text.charSpacing = v
         }
         CGPDFOperatorTableSetCallback(table, "Tw") { scanner, info in
-            guard let s = state(info), let v = pop(scanner) else { return }
+            guard let s = PDFFontMap.state(info), let v = PDFFontMap.pop(scanner) else { return }
             s.text.wordSpacing = v
         }
         CGPDFOperatorTableSetCallback(table, "Tz") { scanner, info in
-            guard let s = state(info), let v = pop(scanner) else { return }
+            guard let s = PDFFontMap.state(info), let v = PDFFontMap.pop(scanner) else { return }
             s.text.scale = v / 100
         }
         CGPDFOperatorTableSetCallback(table, "TL") { scanner, info in
-            guard let s = state(info), let v = pop(scanner) else { return }
+            guard let s = PDFFontMap.state(info), let v = PDFFontMap.pop(scanner) else { return }
             s.text.leading = v
         }
         CGPDFOperatorTableSetCallback(table, "Ts") { scanner, info in
-            guard let s = state(info), let v = pop(scanner) else { return }
+            guard let s = PDFFontMap.state(info), let v = PDFFontMap.pop(scanner) else { return }
             s.text.rise = v
         }
         CGPDFOperatorTableSetCallback(table, "Tr") { scanner, info in
-            guard let s = state(info), let v = pop(scanner) else { return }
+            guard let s = PDFFontMap.state(info), let v = PDFFontMap.pop(scanner) else { return }
             s.text.renderMode = Int(v)
         }
         CGPDFOperatorTableSetCallback(table, "Tf") { scanner, info in
-            guard let s = state(info) else { return }
+            guard let s = PDFFontMap.state(info) else { return }
             var size: CGPDFReal = 0
             var name: UnsafePointer<CChar>?
             guard CGPDFScannerPopNumber(scanner, &size), CGPDFScannerPopName(scanner, &name), let name else { return }
             s.text.size = Double(size)
-            s.text.font = font(named: name, scanner: scanner, state: s)
+            s.text.font = PDFFontMap.font(named: name, scanner: scanner, state: s)
         }
         CGPDFOperatorTableSetCallback(table, "Td") { scanner, info in
-            guard let s = state(info), let ty = pop(scanner), let tx = pop(scanner) else { return }
-            moveText(s, tx, ty)
+            guard let s = PDFFontMap.state(info), let ty = PDFFontMap.pop(scanner), let tx = PDFFontMap.pop(scanner) else { return }
+            PDFFontMap.moveText(s, tx, ty)
         }
         CGPDFOperatorTableSetCallback(table, "TD") { scanner, info in
-            guard let s = state(info), let ty = pop(scanner), let tx = pop(scanner) else { return }
+            guard let s = PDFFontMap.state(info), let ty = PDFFontMap.pop(scanner), let tx = PDFFontMap.pop(scanner) else { return }
             s.text.leading = -ty
-            moveText(s, tx, ty)
+            PDFFontMap.moveText(s, tx, ty)
         }
         CGPDFOperatorTableSetCallback(table, "Tm") { scanner, info in
-            guard let s = state(info), let m = popMatrix(scanner) else { return }
+            guard let s = PDFFontMap.state(info), let m = PDFFontMap.popMatrix(scanner) else { return }
             s.tm = m
             s.tlm = m
         }
         CGPDFOperatorTableSetCallback(table, "T*") { _, info in
-            guard let s = state(info) else { return }
-            moveText(s, 0, -s.text.leading)
+            guard let s = PDFFontMap.state(info) else { return }
+            PDFFontMap.moveText(s, 0, -s.text.leading)
         }
         CGPDFOperatorTableSetCallback(table, "Tj") { scanner, info in
-            guard let s = state(info) else { return }
+            guard let s = PDFFontMap.state(info) else { return }
             var string: CGPDFStringRef?
             guard CGPDFScannerPopString(scanner, &string), let string else { return }
-            show(string, state: s)
+            PDFFontMap.show(string, state: s)
         }
         CGPDFOperatorTableSetCallback(table, "'") { scanner, info in
-            guard let s = state(info) else { return }
+            guard let s = PDFFontMap.state(info) else { return }
             var string: CGPDFStringRef?
             guard CGPDFScannerPopString(scanner, &string), let string else { return }
-            moveText(s, 0, -s.text.leading)
-            show(string, state: s)
+            PDFFontMap.moveText(s, 0, -s.text.leading)
+            PDFFontMap.show(string, state: s)
         }
         CGPDFOperatorTableSetCallback(table, "\"") { scanner, info in
-            guard let s = state(info) else { return }
+            guard let s = PDFFontMap.state(info) else { return }
             var string: CGPDFStringRef?
             guard CGPDFScannerPopString(scanner, &string), let string,
-                  let charSpacing = pop(scanner), let wordSpacing = pop(scanner) else { return }
+                  let charSpacing = PDFFontMap.pop(scanner), let wordSpacing = PDFFontMap.pop(scanner) else { return }
             s.text.charSpacing = charSpacing
             s.text.wordSpacing = wordSpacing
-            moveText(s, 0, -s.text.leading)
-            show(string, state: s)
+            PDFFontMap.moveText(s, 0, -s.text.leading)
+            PDFFontMap.show(string, state: s)
         }
         CGPDFOperatorTableSetCallback(table, "TJ") { scanner, info in
-            guard let s = state(info) else { return }
+            guard let s = PDFFontMap.state(info) else { return }
             var array: CGPDFArrayRef?
             guard CGPDFScannerPopArray(scanner, &array), let array else { return }
             for i in 0..<CGPDFArrayGetCount(array) {
                 var string: CGPDFStringRef?
                 var number: CGPDFReal = 0
                 if CGPDFArrayGetString(array, i, &string), let string {
-                    show(string, state: s)
+                    PDFFontMap.show(string, state: s)
                 } else if CGPDFArrayGetNumber(array, i, &number) {
                     let tx = -Double(number) / 1000 * s.text.size * s.text.scale
                     s.tm = CGAffineTransform(translationX: tx, y: 0).concatenating(s.tm)
@@ -249,10 +249,10 @@ final class PDFFontMap {
             }
         }
         CGPDFOperatorTableSetCallback(table, "Do") { scanner, info in
-            guard let s = state(info), s.depth < 4 else { return }
+            guard let s = PDFFontMap.state(info), s.depth < 4 else { return }
             var name: UnsafePointer<CChar>?
             guard CGPDFScannerPopName(scanner, &name), let name else { return }
-            drawForm(named: name, scanner: scanner, state: s, info: info)
+            PDFFontMap.drawForm(named: name, scanner: scanner, state: s, info: info)
         }
     }
 
