@@ -1,7 +1,7 @@
 name: CI
 
-# macOS minutes count ten times against the plan, so CI runs only when
-# started by hand (Actions → CI → Run workflow) or for a version tag.
+# Runs when started by hand (Actions → CI → Run workflow) or for a version
+# tag. A tag like v1.2.0 also publishes the app on the Releases page.
 on:
   workflow_dispatch:
     inputs:
@@ -15,6 +15,8 @@ on:
 jobs:
   macos:
     runs-on: macos-15
+    permissions:
+      contents: write
     env:
       # Print where a crash happened, if one does.
       SWIFT_BACKTRACE: enable=yes,sanitize=yes,interactive=no
@@ -51,7 +53,10 @@ jobs:
 
       - name: Build the app
         if: ${{ github.event_name != 'workflow_dispatch' || inputs.app }}
-        run: scripts/build-app.sh universal
+        run: |
+          # A version tag (v1.2.0) sets the app's version.
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then export VERSION="${GITHUB_REF_NAME#v}"; fi
+          scripts/build-app.sh universal
 
       - name: Convert the sample PDFs
         if: ${{ github.event_name != 'workflow_dispatch' || inputs.app }}
@@ -83,3 +88,18 @@ jobs:
         with:
           name: sample-epubs
           path: dist/samples/*.epub
+
+      - name: Publish the release
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cat > notes.md <<'NOTES'
+          Download **PDF-to-EPUB.zip** below, unzip it and drag **PDF to EPUB.app** into Applications. Needs macOS 13 or later.
+
+          The app isn't notarized by Apple, so the first time you open it macOS will say it can't check it. On macOS 15 or later, open **System Settings → Privacy & Security**, scroll down and click **Open Anyway**. On earlier versions, right-click the app, choose **Open**, then **Open** again.
+
+          Personal, non-commercial use only; see [LICENSE](https://github.com/${{ github.repository }}/blob/main/LICENSE).
+          NOTES
+          gh release create "$GITHUB_REF_NAME" dist/PDF-to-EPUB.zip \
+            --title "PDF to EPUB ${GITHUB_REF_NAME#v}" --notes-file notes.md --generate-notes

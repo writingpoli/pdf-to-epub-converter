@@ -51,7 +51,17 @@ This is handy for converting a stack of books, or for checking what the converte
 
 ## Installing
 
-### Build it yourself (recommended)
+### Download
+
+Get **PDF-to-EPUB.zip** from the [Releases page](https://github.com/writingpoli/pdf-to-epub-converter/releases/latest), unzip it and drag **PDF to EPUB.app** into Applications. It needs macOS 13 or later.
+
+The app is signed ad hoc, not notarized by Apple, so the first time you open it macOS will say it can't check it. On macOS 15 or later, open **System Settings → Privacy & Security**, scroll down and click **Open Anyway**. On earlier versions, right-click the app, choose **Open**, then **Open** again. You can also clear the quarantine flag:
+
+```sh
+xattr -dr com.apple.quarantine "/Applications/PDF to EPUB.app"
+```
+
+### Build it yourself
 
 You'll need macOS 13 or later and the Xcode Command Line Tools (`xcode-select --install`).
 
@@ -64,13 +74,9 @@ open dist
 
 Drag **PDF to EPUB.app** into Applications.
 
-### Download from CI
+### Test builds
 
-GitHub Actions builds the app when started by hand (**Actions → CI → Run workflow**) or when a version tag like `v1.0` is pushed; macOS build minutes are costly, so it doesn't run on every push. Open the run and download the **PDF-to-EPUB-app** artifact. That build is signed ad hoc, not notarized, so the first time you open it macOS will say it can't check it. Right-click the app, choose **Open**, then **Open** again. You can also clear the quarantine flag:
-
-```sh
-xattr -dr com.apple.quarantine "/Applications/PDF to EPUB.app"
-```
+GitHub Actions also builds the app when started by hand (**Actions → CI → Run workflow**). Open the run and download the **PDF-to-EPUB-app** artifact (you need to be signed in to GitHub). Pushing a version tag such as `v1.2.0` builds the app and publishes it on the Releases page.
 
 ## When a book comes out wrong
 
@@ -111,3 +117,7 @@ swift run pdf2epub Tests/Fixtures/alice-sample.pdf -o /tmp/alice.epub
 ```
 
 `Tests/Fixtures` holds a sample book PDF made by `scripts/make_sample_pdf.py` (public-domain text from *Alice's Adventures in Wonderland*). It deliberately includes the awkward parts: a picture cover, a printed contents page, changing running heads, page numbers, hyphenated justified text, a scene break, an illustration plate, a footnote, endnotes, and bookmarks with clickable contents entries (there's also a copy with no bookmarks or links, to test the fallbacks).
+
+## License
+
+Copyright © 2026 writingpoli. All rights reserved. You may download or build the app and use it for your own personal, non-commercial use; you may not redistribute, modify for distribution, or sell it, or use it commercially, without permission. See [LICENSE](LICENSE).
