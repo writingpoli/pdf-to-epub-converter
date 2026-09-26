@@ -77,7 +77,8 @@ public enum Diagnostics {
         for index in max(0, pageNumber - 2)...min(document.pageCount - 1, pageNumber) {
             if let p = document.page(at: index) { lines += extractor.textLines(on: p, index: index) }
         }
-        out += "\nFonts in these pages' drawing instructions (name | characters | read as):\n"
+        out += "\nLines matched to the fonts that drew them: \(extractor.linesMatched) of \(extractor.linesSeen)\n"
+        out += "Fonts in these pages' drawing instructions (name | characters | read as):\n"
         if extractor.drawnFonts.isEmpty { out += "  none matched\n" }
         for font in extractor.drawnFonts.values.sorted(by: { $0.characters > $1.characters }) {
             let readAs = [font.bold ? "bold" : nil, font.italic ? "italic" : nil].compactMap { $0 }

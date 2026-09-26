@@ -495,6 +495,8 @@ public struct LayoutAnalyzer {
         var previous: TextLine?          // previous line of the open paragraph
         var previousAny: TextLine?       // previous line of any kind
         var paragraphIsBlockLines = false
+        var paragraphIsBullet = false
+        var paragraphStartX = 0.0
 
         func flush() {
             if !paragraph.isEmpty {
@@ -571,6 +573,14 @@ public struct LayoutAnalyzer {
                 var joinWithBreak = false
                 if let p = previous, Self.boundary(in: boundaries, from: p, to: line, bodySize: body) {
                     startsNew = true
+                } else if let p = previous, paragraphIsBullet, !Self.startsWithBullet(line.text),
+                          line.page == p.page, line.y - p.y < spacing * 1.4,
+                          line.x > paragraphStartX + body * 0.3 {
+                    // A bullet item's second line, indented to sit under its text.
+                    startsNew = false
+                } else if previous != nil, paragraphIsBullet, line.x < paragraphStartX - body * 0.3 {
+                    // Text back out at the margin: the list is over.
+                    startsNew = true
                 } else if let p = previous {
                     startsNew = false
                     let colWidth = m.columnWidth(page: p.page)
@@ -625,6 +635,8 @@ public struct LayoutAnalyzer {
                     paragraph = line.runs
                     paragraphIndented = m.indent(of: line) > body * 0.6
                     paragraphStart = (line.page, line.y)
+                    paragraphIsBullet = Self.startsWithBullet(line.text)
+                    paragraphStartX = line.x
                     previous = line
                     paragraphIsBlockLines = false
                     continue

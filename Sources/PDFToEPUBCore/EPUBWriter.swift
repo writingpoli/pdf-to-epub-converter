@@ -74,12 +74,34 @@ public struct EPUBWriter {
             let href = "text/\(fileName)"
             var body = ""
             var previousWasParagraph = false
+            var inList = false
             var pendingID: String?
             func idAttribute() -> String {
                 defer { pendingID = nil }
                 return pendingID.map { " id=\"\(escape($0, attribute: true))\"" } ?? ""
             }
             for block in file.blocks {
+                // Bulleted paragraphs become a list, so wrapped lines sit under the text.
+                var bulletRuns: [TextRun]?
+                if case .paragraph(let runs, _) = block, let text = runs.first?.text,
+                   let first = text.first, LayoutAnalyzer.bullets.contains(first) {
+                    var rest = runs
+                    rest[0].text = String(text.dropFirst().drop(while: \.isWhitespace))
+                    bulletRuns = rest.filter { !$0.text.isEmpty }
+                }
+                if bulletRuns == nil, inList, !isAnchor(block) {
+                    body += "</ul>\n"
+                    inList = false
+                }
+                if let items = bulletRuns {
+                    if !inList {
+                        body += "<ul class=\"bullets\">\n"
+                        inList = true
+                    }
+                    body += "<li\(idAttribute())>\(inline(items, targets: targets, file: fileName))</li>\n"
+                    previousWasParagraph = false
+                    continue
+                }
                 switch block {
                 case .heading(let level, let runs):
                     body += "<h\(level)\(idAttribute())>\(inline(runs, targets: targets, file: fileName))</h\(level)>\n"
@@ -107,6 +129,7 @@ public struct EPUBWriter {
                     previousWasParagraph = false
                 }
             }
+            if inList { body += "</ul>\n" }
             if let waiting = pendingID { body += "<div id=\"\(escape(waiting, attribute: true))\"></div>\n" }
             let title = file.part == 0 ? chapter.title : "\(chapter.title) (continued)"
             zip.add("OEBPS/\(href)", xhtml(title: title, body: "<section epub:type=\"chapter\" id=\"c\(file.chapterIndex + 1)\">\n\(body)</section>", language: language))
@@ -122,6 +145,11 @@ public struct EPUBWriter {
 
         zip.add("OEBPS/content.opf", packageDocument(book: book, language: language, manifest: manifest, spine: spine))
         return zip.finalized()
+    }
+
+    private func isAnchor(_ block: Block) -> Bool {
+        if case .anchor = block { return true }
+        return false
     }
 
     // MARK: - Splitting long chapters
@@ -389,6 +417,11 @@ public struct EPUBWriter {
       margin: 1.4em auto;
       opacity: 0.5;
     }
+    ul.bullets {
+      margin: 0.6em 0;
+      padding-left: 1.4em;
+    }
+    ul.bullets li { margin: 0.2em 0; }
     figure.page {
       margin: 1em 0;
       text-align: center;

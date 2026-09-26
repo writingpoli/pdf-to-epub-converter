@@ -356,4 +356,43 @@ final class BulletTests: XCTestCase {
         }
         XCTAssertEqual(items, ["● first item that is long enough to wrap onto", "● second item", "● third item"])
     }
+
+    /// A bullet item's wrapped lines sit indented under its text; they belong to the item.
+    func testWrappedBulletLinesStayWithTheirItem() {
+        var lines: [TextLine] = []
+        var y = 60.0
+        func add(_ text: String, x: Double, width: Double = 300) {
+            lines.append(TextLine(runs: [TextRun(text: text)], page: 0, x: x, y: y, width: width, height: 11.5,
+                                  fontSize: 10, pageWidth: 420, pageHeight: 595))
+            y += 13
+        }
+        for i in 0..<4 { add("Body text line \(i) that runs the whole way across the page", x: i == 0 ? 52 : 40, width: 340) }
+        add("● an item that is long enough to wrap onto the next line", x: 54)
+        add("where it carries on;", x: 64, width: 100)
+        add("● a second item", x: 54, width: 90)
+        add("Back to the body text at the margin, running across.", x: 40, width: 340)
+        let texts = LayoutAnalyzer().analyze(lines: lines).flatMap(\.blocks).compactMap { b -> String? in
+            if case .paragraph(let runs, _) = b { return runs.joinedText } else { return nil }
+        }
+        XCTAssertTrue(texts.contains("● an item that is long enough to wrap onto the next line where it carries on;"), "\(texts)")
+        XCTAssertTrue(texts.contains("● a second item"), "\(texts)")
+    }
+
+    func testBulletedParagraphsBecomeAList() {
+        let book = Book(metadata: BookMetadata(title: "List"), chapters: [Chapter(title: "One", blocks: [
+            .paragraph([TextRun(text: "Before.")], indented: false),
+            .paragraph([TextRun(text: "● first "), TextRun(text: "item", italic: true)], indented: false),
+            .paragraph([TextRun(text: "● second item")], indented: false),
+            .paragraph([TextRun(text: "After.")], indented: false),
+        ])])
+        let writer = EPUBWriter()
+        #if canImport(Compression)
+        _ = writer.makeEPUB(book)
+        #else
+        let data = writer.makeEPUB(book)
+        let text = String(decoding: data, as: UTF8.self)
+        XCTAssertTrue(text.contains("<ul class=\"bullets\">\n<li>first <em>item</em></li>\n<li>second item</li>\n</ul>"), text)
+        XCTAssertTrue(text.contains("</ul>\n<p class=\"noindent\">After.</p>"))
+        #endif
+    }
 }

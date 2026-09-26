@@ -102,6 +102,7 @@ public final class PDFExtractor {
         guard let selection = page.selection(for: box) else { return [] }
         let fontMap = PDFFontMap(page: page)
         let pageText = (page.string ?? "") as NSString
+        var drift = 0
         var lines: [TextLine] = []
         for lineSelection in selection.selectionsByLine() {
             guard let string = lineSelection.string,
@@ -155,10 +156,13 @@ public final class PDFExtractor {
             var fontName = familyWeights.max { $0.value < $1.value }?.key
             // PDFKit can report stand-in fonts (a whole book in "Helvetica");
             // the page's own drawing instructions say which font really drew what.
-            if let real = realFonts(for: string, bounds: bounds, page: page, pageText: pageText, map: fontMap) {
+            linesSeen += 1
+            if let real = realFonts(for: string, selection: lineSelection, bounds: bounds, page: page,
+                                    pageText: pageText, map: fontMap, drift: &drift) {
                 runs = real.runs
                 fontSize = real.size
                 fontName = real.family
+                linesMatched += 1
             }
 
             lines.append(TextLine(runs: runs, page: index,
@@ -176,64 +180,68 @@ public final class PDFExtractor {
 
     /// Fonts found in the pages' drawing instructions, with how each was read.
     public private(set) var drawnFonts: [String: FontReport] = [:]
+    /// Lines read so far, and how many were matched to the fonts that drew them.
+    public private(set) var linesSeen = 0
+    public private(set) var linesMatched = 0
 
     /// Rebuilds a line's styled runs from the fonts that really drew each
     /// character. Returns nil when too little of the line can be matched up.
-    func realFonts(for text: String, bounds: CGRect, page: PDFPage, pageText: NSString,
-                   map: PDFFontMap) -> (runs: [TextRun], size: Double, family: String?)? {
+    func realFonts(for text: String, selection: PDFSelection, bounds: CGRect, page: PDFPage, pageText: NSString,
+                   map: PDFFontMap, drift: inout Int) -> (runs: [TextRun], size: Double, family: String?)? {
         guard !map.spans.isEmpty else { return nil }
         let line = text.trimmingCharacters(in: .newlines) as NSString
         guard line.length > 0, pageText.length >= line.length else { return nil }
 
-        // Where the line sits in the page's text, to ask for each character's position.
+        // Which of PDFKit's character numbers make up this line. The line's
+        // selection says so directly; the page text search and the position
+        // hint are fallbacks. PDFKit's text and its character positions can
+        // count differently (the gap grows down the page), so each candidate
+        // is checked by where its first and last characters actually sit.
         let characterCount = page.numberOfCharacters
-        // PDFKit answers NSNotFound (Int.max) when no character is at the point.
-        let rawHint = page.characterIndex(at: CGPoint(x: bounds.minX + 1, y: bounds.midY))
-        let hint = rawHint >= 0 && rawHint < pageText.length ? rawHint : -1
-        var start = NSNotFound
-        if hint >= 0, line.length <= pageText.length - hint,
-           pageText.substring(with: NSRange(location: hint, length: line.length)) == line as String {
-            start = hint
-        } else {
-            // Search near the hint, keeping the range inside the text (the hint
-            // counts characters PDFKit's way, which can run past the text).
-            let center = min(max(hint, 0), pageText.length)
-            let lo = hint >= 0 ? max(0, center - 600) : 0
-            let hi = hint >= 0 ? min(pageText.length, center + 600 + line.length) : pageText.length
-            guard hi > lo else { return nil }
-            start = pageText.range(of: line as String, options: [.literal],
-                                   range: NSRange(location: lo, length: hi - lo)).location
-        }
-        guard start != NSNotFound else { return nil }
         func characterBox(_ index: Int) -> CGRect? {
             index >= 0 && index < characterCount ? page.characterBounds(at: index) : nil
         }
-
-        // PDFKit's text and its character positions don't always count
-        // characters the same way (line breaks can be counted differently),
-        // so line the two up: the right offset puts the line's first and last
-        // characters at the line's edges.
         func usable(_ r: CGRect) -> Bool {
             !r.isNull && !r.isInfinite && r.minX.isFinite && r.minY.isFinite && (r.width > 0 || r.height > 0)
         }
+        func inLine(_ r: CGRect) -> Bool {
+            r.midY >= bounds.minY - 1 && r.midY <= bounds.maxY + 1
+                && r.midX >= bounds.minX - 2 && r.midX <= bounds.maxX + 2
+        }
+        var bases: [Int] = []
+        if selection.numberOfTextRanges(on: page) > 0 {
+            bases.append(selection.range(at: 0, on: page).location)
+        }
+        let rawHint = page.characterIndex(at: CGPoint(x: bounds.minX + 1, y: bounds.midY))
+        if rawHint >= 0 && rawHint < characterCount { bases.append(rawHint) }
+        let found = pageText.range(of: line as String, options: [.literal]).location
+        if found != NSNotFound {
+            bases.append(found + drift)
+            bases.append(found)
+        }
+        bases = bases.filter { $0 >= 0 && $0 < characterCount }
         let lastInk = (0..<line.length).last { k in
             let unit = line.character(at: k)
             return unit != 32 && unit != 9 && unit != 0xA0
         } ?? line.length - 1
-        var bestOffset: Int?
-        var bestScore = CGFloat.infinity
-        for offset in -8...8 {
-            guard let a = characterBox(start + offset), let b = characterBox(start + offset + lastInk),
-                  usable(a), usable(b) else { continue }
-            let score = abs(a.minX - bounds.minX) + abs(b.maxX - bounds.maxX)
-                + abs(a.midY - bounds.midY) + abs(b.midY - bounds.midY)
-            if score < bestScore {
-                bestScore = score
-                bestOffset = offset
+        let firstInk = (0..<line.length).first { k in
+            let unit = line.character(at: k)
+            return unit != 32 && unit != 9 && unit != 0xA0
+        } ?? 0
+        var best: (start: Int, score: CGFloat)?
+        for base in bases {
+            for offset in -3...3 {
+                let candidate = base + offset
+                guard let a = characterBox(candidate + firstInk), let b = characterBox(candidate + lastInk),
+                      usable(a), usable(b), inLine(a), inLine(b) else { continue }
+                let score = abs(a.minX - bounds.minX) + abs(b.maxX - bounds.maxX)
+                if score < (best?.score ?? .infinity) { best = (candidate, score) }
             }
+            if let best, best.score < 1 { break }
         }
-        guard let offset = bestOffset, bestScore < max(4, bounds.height) else { return nil }
-        start += offset
+        guard let best, best.score < max(3, bounds.height * 0.4) else { return nil }
+        let start = best.start
+        if found != NSNotFound { drift = start - found }
 
         struct Style: Equatable {
             var bold: Bool
@@ -250,7 +258,7 @@ public final class PDFExtractor {
             }
             letters += 1
             let span = characterBox(start + k).flatMap { r in
-                usable(r) ? map.span(at: CGPoint(x: r.midX, y: r.midY)) : nil
+                usable(r) && inLine(r) ? map.span(at: CGPoint(x: r.midX, y: r.midY)) : nil
             }
             if span != nil { matched += 1 }
             spans.append(span)
