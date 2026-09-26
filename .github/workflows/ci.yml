@@ -4,12 +4,20 @@ name: CI
 # started by hand (Actions → CI → Run workflow) or for a version tag.
 on:
   workflow_dispatch:
+    inputs:
+      app:
+        description: "Build and upload the app (off for a quicker, cheaper test-only run)"
+        type: boolean
+        default: true
   push:
     tags: ["v*"]
 
 jobs:
   macos:
     runs-on: macos-15
+    env:
+      # Print where a crash happened, if one does.
+      SWIFT_BACKTRACE: enable=yes,sanitize=yes,interactive=no
     steps:
       - uses: actions/checkout@v4
 
@@ -28,7 +36,7 @@ jobs:
       - name: Show what PDFKit reads from the note pages
         if: always()
         run: |
-          swift run pdf2epub Tests/Fixtures/alice-sample.pdf --dump-lines lines.json
+          swift run pdf2epub Tests/Fixtures/alice-sample.pdf --dump-lines lines.json --verbose
           python3 - <<'PY'
           import json
           dump = json.load(open("lines.json"))
@@ -42,9 +50,11 @@ jobs:
           PY
 
       - name: Build the app
+        if: ${{ github.event_name != 'workflow_dispatch' || inputs.app }}
         run: scripts/build-app.sh universal
 
       - name: Convert the sample PDFs
+        if: ${{ github.event_name != 'workflow_dispatch' || inputs.app }}
         run: |
           mkdir -p dist/samples
           CLI="dist/PDF to EPUB.app/Contents/Resources/pdf2epub"
@@ -52,20 +62,24 @@ jobs:
           "$CLI" Tests/Fixtures/alice-no-bookmarks.pdf -o dist/samples/alice-no-bookmarks.epub
 
       - name: Validate with EPUBCheck
+        if: ${{ github.event_name != 'workflow_dispatch' || inputs.app }}
         run: |
           curl -sSL -o epubcheck.zip https://github.com/w3c/epubcheck/releases/download/v5.1.0/epubcheck-5.1.0.zip
           unzip -q epubcheck.zip
           for f in dist/samples/*.epub; do java -jar epubcheck-5.1.0/epubcheck.jar "$f"; done
 
       - name: Package
+        if: ${{ github.event_name != 'workflow_dispatch' || inputs.app }}
         run: ditto -c -k --keepParent "dist/PDF to EPUB.app" "dist/PDF-to-EPUB.zip"
 
       - uses: actions/upload-artifact@v4
+        if: ${{ github.event_name != 'workflow_dispatch' || inputs.app }}
         with:
           name: PDF-to-EPUB-app
           path: dist/PDF-to-EPUB.zip
 
       - uses: actions/upload-artifact@v4
+        if: ${{ github.event_name != 'workflow_dispatch' || inputs.app }}
         with:
           name: sample-epubs
           path: dist/samples/*.epub

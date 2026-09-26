@@ -131,7 +131,9 @@ if let dumpLines {
     do {
         guard let document = PDFDocument(url: inputURL) else { fail("couldn't open \(input)") }
         let extractor = PDFExtractor(document: document)
-        let extracted = try extractor.extract(options: options.extraction)
+        let extracted = try extractor.extract(options: options.extraction) { done, total in
+            if verbose && done < total { FileHandle.standardError.write(Data("reading page \(done + 1)\n".utf8)) }
+        }
         let fonts = extractor.fonts.values.sorted { $0.characters > $1.characters }
         let dump = LinesDump(lines: extracted.lines, fonts: fonts, outline: extracted.outline,
                              title: extracted.title, author: extracted.author)
