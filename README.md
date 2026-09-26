@@ -120,4 +120,4 @@ swift run pdf2epub Tests/Fixtures/alice-sample.pdf -o /tmp/alice.epub
 
 ## License
 
-Copyright © 2026 writingpoli. All rights reserved. You may download or build the app and use it for your own personal, non-commercial use; you may not redistribute, modify for distribution, or sell it, or use it commercially, without permission. See [LICENSE](LICENSE).
+Copyright © 2026 William O. Pate II. All rights reserved. You may download or build the app and use it for your own personal, non-commercial use; you may not redistribute, modify for distribution, or sell it, or use it commercially, without permission. See [LICENSE](LICENSE).
