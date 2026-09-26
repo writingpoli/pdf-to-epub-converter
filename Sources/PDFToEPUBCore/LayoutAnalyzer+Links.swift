@@ -312,6 +312,49 @@ extension LayoutAnalyzer {
         return (n, text[group].count)
     }
 
+    /// Note reference numbers as read, in order, with misread ones corrected
+    /// from the sequence: 1, 2, 3, 4, 5, *4*, 7 becomes 1, 2, 3, 4, 5, 6, 7. A
+    /// number cited again (…, 5, 3, 6, …) is left alone. When the numbers are
+    /// mostly out of sequence, their order alone is used.
+    static func sequenced(_ read: [Int]) -> [Int] {
+        guard !read.isEmpty else { return read }
+        var fixed = read
+        var previous = max(0, read[0] - 1)
+        if read.count >= 2, read[0] != 1, read[1] == 2 { previous = 0 }
+        for i in fixed.indices {
+            let next = i + 1 < read.count ? read[i + 1] : nil
+            if fixed[i] <= 0 {
+                fixed[i] = previous + 1      // number unknown: next in the sequence
+            } else if fixed[i] != previous + 1, next == previous + 2 {
+                fixed[i] = previous + 1
+            }
+            // A number cited again doesn't move the sequence on.
+            previous = max(previous, fixed[i])
+        }
+        // Numbers that neither continue the sequence nor repeat an earlier one.
+        var seen = Set([fixed[0]]), highest = fixed[0], breaks = 0
+        for number in fixed.dropFirst() {
+            if number != highest + 1 && !seen.contains(number) { breaks += 1 }
+            seen.insert(number)
+            highest = max(highest, number)
+        }
+        if fixed.count >= 4, Double(breaks) > Double(fixed.count) * 0.3 {
+            let start = max(1, read.min() ?? 1)
+            return Array(start..<(start + fixed.count))
+        }
+        return fixed
+    }
+
+    /// How a note's number is set: "sup" (raised), "." ("12." or "12)") or " " ("12 Text").
+    static func numberStyle(_ runs: [TextRun], digits: Int) -> String {
+        if runs.first?.superscript == true { return "sup" }
+        let text = runs.joinedText
+        guard let digit = text.firstIndex(where: \.isNumber),
+              let after = text.index(digit, offsetBy: digits, limitedBy: text.endIndex), after < text.endIndex
+        else { return " " }
+        return ".)".contains(text[after]) ? "." : " "
+    }
+
     /// Links superscript numbers in the text to the numbered notes in a
     /// "Notes" section, and each note back to where it's cited. Notes are
     /// often numbered afresh for each chapter, grouped under the chapter's
@@ -322,49 +365,112 @@ extension LayoutAnalyzer {
             isNotesTitle($0.title) || isNotesTitle(firstHeadingText($0.blocks))
         }) else { return }
 
-        // Read the numbered notes. Lines that don't start with a number continue
-        // the note before (hanging indents otherwise look like new paragraphs).
+        // Read the numbered notes. A note runs until the next note in the
+        // numbering: its later paragraphs, and lines that happen to start with
+        // a number ("12 (3): 45–67."), are part of it, so the whole note shows
+        // when Books pops it up. Numbering starting again at 1 begins the notes
+        // for the next chapter, and a short line just before names it.
+        func noteText(_ block: Block) -> [TextRun]? {
+            switch block {
+            case .paragraph(let runs, _), .quote(let runs): return runs
+            default: return nil
+            }
+        }
+        // The notes may be split into a chapter for each chapter they belong
+        // to ("Notes to Chapter 2"); those follow on while they're mostly notes.
+        var notesEnd = notesIndex + 1
+        while notesEnd < chapters.count {
+            let texts = chapters[notesEnd].blocks.compactMap(noteText)
+            let numbered = texts.filter { leadingNumber($0) != nil }.count
+            guard numbered >= 2, Double(numbered) >= Double(texts.count) * 0.4 else { break }
+            notesEnd += 1
+        }
+        let notesChapters = notesIndex..<notesEnd
+        var source: [Block] = []
+        var sourceOwner: [Int] = []
+        for c in notesChapters {
+            source += chapters[c].blocks
+            sourceOwner += Array(repeating: c, count: chapters[c].blocks.count)
+        }
+        func nextNumber(after index: Int) -> Int? {
+            for block in source[(index + 1)...] {
+                if case .heading = block { return nil }
+                if let runs = noteText(block), let (number, _) = leadingNumber(runs) { return number }
+            }
+            return nil
+        }
         var blocks: [Block] = []
+        var owners: [Int] = []             // the chapter each block goes back into
         var notes: [(block: Int, number: Int, digits: Int, group: Int)] = []
         var groupHeadings: [Int: String] = [:]
         var lastHeading: String?
         var group = -1
-        var lastNumber = Int.max
-        for block in chapters[notesIndex].blocks {
-            switch block {
-            case .heading(_, let runs):
+        var lastNumber = 0
+        var styles: [String: Int] = [:]      // how notes start: "12.", "12 ", or a raised 12
+        for (index, block) in source.enumerated() {
+            let owner = sourceOwner[index]
+            if index > 0, owner != sourceOwner[index - 1] { lastHeading = chapters[owner].title }
+            if case .heading(_, let runs) = block {
                 lastHeading = runs.joinedText
                 blocks.append(block)
-            case .paragraph(let runs, let indented):
-                if let (number, digits) = leadingNumber(runs) {
-                    if number <= lastNumber || group < 0 {
+                owners.append(owner)
+                continue
+            }
+            guard let runs = noteText(block) else {
+                blocks.append(block)
+                owners.append(owner)
+                continue
+            }
+            let text = runs.joinedText.trimmingCharacters(in: .whitespaces)
+            let numbered = leadingNumber(runs)
+            let inNote = notes.last.map { $0.block == blocks.count - 1 && owners[$0.block] == owner } ?? false
+            if let (number, digits) = numbered {
+                let style = numberStyle(runs, digits: digits)
+                let usual = notes.count >= 3 ? styles.max { $0.value < $1.value }?.key : nil
+                let restart = number <= 2 && number < lastNumber
+                let next = number > lastNumber && number <= lastNumber + 3
+                if notes.isEmpty || !inNote || ((next || restart) && (usual == nil || style == usual)) {
+                    if group < 0 || restart || (!inNote && number < lastNumber) {
                         group += 1
                         groupHeadings[group] = lastHeading
                     }
                     lastNumber = number
+                    styles[style, default: 0] += 1
                     notes.append((blocks.count, number, digits, group))
-                    blocks.append(block)
-                } else if let last = notes.last, last.block == blocks.count - 1,
-                          case .paragraph(var previous, let previousIndent) = blocks[last.block],
-                          continuesNote(previous, with: runs) {
-                    join(&previous, with: runs, hyphenatedWords: [])
-                    blocks[last.block] = .paragraph(compact(previous), indented: previousIndent)
-                } else {
-                    // Short unnumbered lines between notes name the chapter they belong to.
-                    if runs.joinedText.count <= 100 { lastHeading = runs.joinedText }
-                    blocks.append(.paragraph(runs, indented: indented))
+                    blocks.append(.paragraph(runs, indented: false))
+                    owners.append(owner)
+                    continue
                 }
-            default:
-                blocks.append(block)
             }
+            if inNote, let last = notes.last {
+                let endsSentence = text.last.map { terminalPunctuation.contains($0) } ?? false
+                let namesNextGroup = numbered == nil && text.count <= 100 && !endsSentence
+                    && (nextNumber(after: index) ?? Int.max) <= 2
+                if !namesNextGroup, case .paragraph(var previous, _) = blocks[last.block] {
+                    if continuesNote(previous, with: runs) {
+                        join(&previous, with: runs, hyphenatedWords: [])
+                    } else {
+                        previous.append(TextRun(text: "\n"))
+                        previous.append(contentsOf: runs)
+                    }
+                    blocks[last.block] = .paragraph(compact(previous), indented: false)
+                    continue
+                }
+            }
+            // Short unnumbered lines between notes name the chapter they belong to.
+            if text.count <= 100 { lastHeading = text }
+            blocks.append(block)
+            owners.append(owner)
         }
         guard notes.count >= 2 else { return }
 
         // Superscript numbers in the chapters before the notes. Matching them
         // here beats a link from the PDF that doesn't lead into the notes.
         var notesIDs = Set<String>()
-        for block in chapters[notesIndex].blocks {
-            if case .anchor(let id) = block { notesIDs.insert(id) }
+        for c in notesChapters {
+            for block in chapters[c].blocks {
+                if case .anchor(let id) = block { notesIDs.insert(id) }
+            }
         }
         func replaceable(_ link: Link?) -> Bool {
             guard let link else { return true }
@@ -375,7 +481,9 @@ extension LayoutAnalyzer {
         for c in 0..<notesIndex {
             for (b, block) in chapters[c].blocks.enumerated() {
                 for (r, run) in (block.runs ?? []).enumerated() where run.superscript && replaceable(run.link) {
-                    if let n = Int(run.text.trimmingCharacters(in: .whitespaces)) {
+                    // "*": a marker recovered from the drawing, its number unknown (0).
+                    let text = run.text.trimmingCharacters(in: .whitespaces)
+                    if let n = Int(text) ?? (text == "*" ? 0 : nil) {
                         refs[c, default: []].append((b, r, n))
                     }
                 }
@@ -384,25 +492,68 @@ extension LayoutAnalyzer {
         let citing = refs.keys.sorted()
         guard !citing.isEmpty else { return }
 
-        // Which chapter each group of notes belongs to.
+        // Which chapter each group of notes belongs to. Groups and chapters are
+        // lined up in order, favouring pairs whose numbers agree (a chapter
+        // citing notes 1–24 for a group of 24 notes) and whose names match, and
+        // skipping chapters whose note references weren't found.
         let groupCount = group + 1
+
+        // A note number's digits can be misread (InDesign's superscript
+        // figures sometimes carry the wrong character codes: a printed 6 read
+        // as 4). Markers come in order, so one that breaks the sequence
+        // takes its place in it.
+        if groupCount == 1 {
+            let fixed = sequenced(citing.flatMap { (refs[$0] ?? []).map(\.number) })
+            var k = 0
+            for c in citing {
+                for i in (refs[c] ?? []).indices {
+                    refs[c]![i].number = fixed[k]
+                    k += 1
+                }
+            }
+        } else {
+            for c in citing {
+                let fixed = sequenced((refs[c] ?? []).map(\.number))
+                for i in fixed.indices { refs[c]![i].number = fixed[i] }
+            }
+        }
+
         var chapterForGroup: [Int: Int] = [:]
         if groupCount == 1 {
             chapterForGroup[0] = -1   // numbered straight through the book
         } else {
-            var next = 0
-            for g in 0..<groupCount {
+            var groupNumbers = Array(repeating: Set<Int>(), count: groupCount)
+            for note in notes { groupNumbers[note.group].insert(note.number) }
+            let refNumbers = citing.map { Set((refs[$0] ?? []).map(\.number)) }
+            func similarity(_ g: Int, _ k: Int) -> Double {
+                let union = groupNumbers[g].union(refNumbers[k]).count
+                var score = union == 0 ? 0 : Double(groupNumbers[g].intersection(refNumbers[k]).count) / Double(union)
                 let key = groupHeadings[g].map(matchKey) ?? ""
-                let named = key.count >= 4 ? citing.first(where: { c in
-                    let title = matchKey(chapters[c].title)
-                    return title == key || (min(title.count, key.count) >= 6 && (title.contains(key) || key.contains(title)))
-                }) : nil
-                if let named {
-                    chapterForGroup[g] = named
-                    next = (citing.firstIndex(of: named) ?? next) + 1
-                } else if next < citing.count {
-                    chapterForGroup[g] = citing[next]
-                    next += 1
+                let title = matchKey(chapters[citing[k]].title)
+                if key.count >= 4, title == key || (min(title.count, key.count) >= 6 && (title.contains(key) || key.contains(title))) {
+                    score += 1
+                }
+                return score
+            }
+            let k = citing.count
+            var best = Array(repeating: Array(repeating: 0.0, count: k + 1), count: groupCount + 1)
+            for g in 1...groupCount {
+                for c in 1...max(1, k) where k > 0 {
+                    let pair = similarity(g - 1, c - 1)
+                    best[g][c] = max(best[g - 1][c], best[g][c - 1], pair > 0 ? best[g - 1][c - 1] + pair : 0)
+                }
+            }
+            var g = groupCount, c = k
+            while g > 0 && c > 0 {
+                let pair = similarity(g - 1, c - 1)
+                if pair > 0 && best[g][c] == best[g - 1][c - 1] + pair {
+                    chapterForGroup[g - 1] = citing[c - 1]
+                    g -= 1
+                    c -= 1
+                } else if best[g][c] == best[g - 1][c] {
+                    g -= 1
+                } else {
+                    c -= 1
                 }
             }
         }
@@ -420,6 +571,7 @@ extension LayoutAnalyzer {
                     var runs = chapters[c].blocks[ref.block].runs ?? []
                     guard ref.run < runs.count, replaceable(runs[ref.run].link) else { continue }
                     runs[ref.run].link = .anchor(id)
+                    runs[ref.run].text = "\(note.number)"   // as corrected, or recovered
                     if firstRef { runs[ref.run].id = refID }
                     chapters[c].blocks[ref.block] = chapters[c].blocks[ref.block].withRuns(runs)
                     if firstRef {
@@ -438,11 +590,10 @@ extension LayoutAnalyzer {
         }
         guard !citedNotes.isEmpty else { return }
 
-        var withAnchors: [Block] = []
+        for c in notesChapters { chapters[c].blocks = [] }
         for (i, block) in blocks.enumerated() {
-            if let id = noteIDs[i] { withAnchors.append(.anchor(id)) }
-            withAnchors.append(block)
+            if let id = noteIDs[i] { chapters[owners[i]].blocks.append(.anchor(id)) }
+            chapters[owners[i]].blocks.append(block)
         }
-        chapters[notesIndex].blocks = withAnchors
     }
 }

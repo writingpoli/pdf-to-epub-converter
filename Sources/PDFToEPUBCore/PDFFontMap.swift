@@ -36,6 +36,8 @@ final class PDFFontMap {
         /// Drawn filled and outlined (a regular font made to look bold).
         var outlined: Bool
         var characters: Int
+        /// Its place in `spans`.
+        var id = 0
     }
 
     private(set) var spans: [Span] = []
@@ -62,6 +64,7 @@ final class PDFFontMap {
             if span.x1 < span.x0 { swap(&span.x0, &span.x1) }
             return span
         }
+        for i in spans.indices { spans[i].id = i }
         for (i, span) in spans.enumerated() {
             buckets[Int((span.baseline / Self.bucketHeight).rounded(.down)), default: []].append(i)
         }

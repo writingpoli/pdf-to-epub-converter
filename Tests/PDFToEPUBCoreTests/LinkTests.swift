@@ -310,6 +310,54 @@ final class SectionHeadingTests: XCTestCase {
 extension LinkTests {
     /// Some PDFs link note markers to the front of the book. Those links are
     /// dropped, and the marker is matched to its endnote instead.
+    func testMisreadNoteNumbersFollowTheSequence() {
+        XCTAssertEqual(LayoutAnalyzer.sequenced([1, 2, 3, 4, 5, 4, 7, 8]), [1, 2, 3, 4, 5, 6, 7, 8])
+        XCTAssertEqual(LayoutAnalyzer.sequenced([4, 2, 3]), [1, 2, 3])
+        XCTAssertEqual(LayoutAnalyzer.sequenced([1, 2, 3, 2, 4, 5]), [1, 2, 3, 2, 4, 5], "a note cited again")
+        XCTAssertEqual(LayoutAnalyzer.sequenced([12, 13, 14]), [12, 13, 14], "numbered through the book")
+        XCTAssertEqual(LayoutAnalyzer.sequenced([1, 4, 4, 9, 4, 4, 7]), [1, 2, 3, 4, 5, 6, 7], "mostly unreadable: order")
+        XCTAssertEqual(LayoutAnalyzer.sequenced([1, 2, 0, 4]), [1, 2, 3, 4], "recovered marker, number unknown")
+        XCTAssertEqual(LayoutAnalyzer.sequenced([0, 0, 0]), [1, 2, 3])
+    }
+
+    func testInsertRunAtCharacter() {
+        var runs = [TextRun(text: "word. "), TextRun(text: "Next", italic: true)]
+        runs.insert(TextRun(text: "*", superscript: true), atCharacter: 5)
+        XCTAssertEqual(runs.map(\.text), ["word.", "*", " ", "Next"])
+        runs.insert(TextRun(text: "*", superscript: true), atCharacter: 11)
+        XCTAssertEqual(runs.map(\.text).joined(), "word.* Next*")
+    }
+
+    /// A note's later paragraphs, and lines that start with a number, belong
+    /// to it; a marker whose digit was misread still finds its note.
+    func testWholeNotesAndMisreadMarkers() {
+        var lines: [TextLine] = []
+        lines.append(line("One", page: 0, y: 80, x: 150, width: 120, size: 18))
+        for (k, ref) in [1, 2, 1, 4].enumerated() {   // the third marker is a misread 3
+            lines.append(line([TextRun(text: "A cited sentence number \(k) in chapter one, long enough"),
+                               TextRun(text: "\(ref)", superscript: true)],
+                              page: 0, y: 130 + Double(k) * 14, x: 66))
+        }
+        lines.append(line("Notes", page: 1, y: 80, x: 170, width: 60, size: 18))
+        lines.append(line("1. First note, which runs to one sentence.", page: 1, y: 130, width: 220))
+        lines.append(line("It has a second paragraph, too.", page: 1, y: 150, x: 62, width: 180))
+        lines.append(line("2. Second note, citing a journal:", page: 1, y: 170, width: 200))
+        lines.append(line("12 (3): 45–67.", page: 1, y: 184, width: 100))
+        lines.append(line("3. Third note.", page: 1, y: 204, width: 100))
+        lines.append(line("4. Fourth note.", page: 1, y: 218, width: 100))
+
+        let chapters = LayoutAnalyzer().analyze(lines: lines)
+        let refs = allRuns([chapters[0]]).filter(\.superscript)
+        XCTAssertEqual(refs.map(\.link), [.anchor("en1-1"), .anchor("en1-2"), .anchor("en1-3"), .anchor("en1-4")])
+        let notes = chapters[1].blocks.compactMap { b -> String? in
+            if case .paragraph(let runs, _) = b { return runs.joinedText } else { return nil }
+        }
+        XCTAssertEqual(notes.map { $0.replacingOccurrences(of: "\n", with: " ") },
+                       ["1. First note, which runs to one sentence. It has a second paragraph, too.",
+                        "2. Second note, citing a journal: 12 (3): 45–67.", "3. Third note.", "4. Fourth note."])
+        assertLinksResolve(chapters)
+    }
+
     func testNoteMarkerLinkingBackwardsIsReplacedByItsEndnote() {
         var lines: [TextLine] = [
             line("Contents", page: 0, y: 60, x: 170, width: 80, size: 16),

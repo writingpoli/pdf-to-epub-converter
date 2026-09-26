@@ -85,6 +85,20 @@ public enum Diagnostics {
             .filter { window.contains($0.page) }
         out += "\nLines matched to the fonts that drew them: \(extractor.linesMatched) of \(extractor.linesSeen)"
         out += ", and \(extractor.linesEstimated) more worked out from the order of the text drawn\n"
+        out += "Note markers drawn but missing from PDFKit's text, recovered: \(extractor.markersRecovered)\n"
+        out += "Note markers on page \(pageNumber) (* = recovered; its number comes from the order):\n"
+        var markerCount = 0
+        for line in lines where line.page == pageNumber - 1 {
+            var before = ""
+            for run in line.runs {
+                if run.superscript {
+                    out += "  ^\(run.text)^ after \"…\(mask(String(before.suffix(14))))\"\n"
+                    markerCount += 1
+                }
+                before += run.text
+            }
+        }
+        if markerCount == 0 { out += "  none\n" }
         out += "Fonts in these pages' drawing instructions (name | characters | read as):\n"
         if extractor.drawnFonts.isEmpty { out += "  none matched\n" }
         for font in extractor.drawnFonts.values.sorted(by: { $0.characters > $1.characters }) {

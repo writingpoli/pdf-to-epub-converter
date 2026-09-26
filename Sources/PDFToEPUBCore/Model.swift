@@ -53,6 +53,27 @@ public struct TextRun: Codable, Equatable {
 }
 
 extension Array where Element == TextRun {
+    /// Inserts a run at a character offset of the joined text, splitting the run there.
+    mutating func insert(_ run: TextRun, atCharacter offset: Int) {
+        var position = 0
+        for i in indices {
+            let count = self[i].text.count
+            if offset <= position + count {
+                let cut = offset - position
+                if cut == 0 { insert(run, at: i); return }
+                if cut == count { insert(run, at: i + 1); return }
+                var head = self[i], tail = self[i]
+                head.text = String(self[i].text.prefix(cut))
+                tail.text = String(self[i].text.dropFirst(cut))
+                tail.id = nil
+                replaceSubrange(i...i, with: [head, run, tail])
+                return
+            }
+            position += count
+        }
+        append(run)
+    }
+
     /// Splits runs so that `range` (in characters of the joined text) is
     /// covered by whole runs, then lets `change` edit those runs.
     mutating func modify(characters range: Range<Int>, _ change: (inout TextRun) -> Void) {

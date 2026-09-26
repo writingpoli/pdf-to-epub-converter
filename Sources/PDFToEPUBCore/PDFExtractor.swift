@@ -163,11 +163,31 @@ public final class PDFExtractor {
                 fontSize = real.size
                 fontName = real.family
                 linesMatched += 1
+                let text = string.trimmingCharacters(in: .newlines) as NSString
+                addMissingMarkers(to: &runs, bounds: bounds, size: fontSize, map: fontMap, covered: real.spansUsed) { span in
+                    // After the last character drawn before the marker.
+                    guard let k = real.characterRight.lastIndex(where: { ($0 ?? .infinity) <= CGFloat(span.x0) + 1 })
+                    else { return 0 }
+                    return (text.substring(to: k + 1) as String).count
+                }
             } else if let estimate = estimatedFonts(for: string, bounds: bounds, map: fontMap) {
                 runs = estimate.runs
                 fontSize = estimate.size
                 fontName = estimate.family
                 linesEstimated += 1
+                let text = Array(runs.joinedText)
+                addMissingMarkers(to: &runs, bounds: bounds, size: fontSize, map: fontMap, covered: []) { span in
+                    // Roughly where along the line it was drawn, at the nearest word end,
+                    // unless the text already has a number there.
+                    let fraction = (span.x0 - Double(bounds.minX)) / max(1, Double(bounds.width))
+                    let guess = min(text.count, max(0, Int((fraction * Double(text.count)).rounded())))
+                    let ends = (1...max(1, text.count)).filter { i in
+                        i <= text.count && !text[i - 1].isWhitespace && (i == text.count || text[i].isWhitespace)
+                    }
+                    guard let at = ends.min(by: { abs($0 - guess) < abs($1 - guess) }) else { return nil }
+                    let near = text[max(0, at - 3)..<min(text.count, at + 2)]
+                    return near.contains(where: \.isNumber) ? nil : at
+                }
             } else if !fontMap.spans.isEmpty {
                 // The page's real fonts are known but this line couldn't be
                 // matched to one; PDFKit's stand-in ("Helvetica") would make it
@@ -195,6 +215,30 @@ public final class PDFExtractor {
     public private(set) var linesMatched = 0
     /// Lines whose fonts were worked out from the order of the text drawn along them.
     public private(set) var linesEstimated = 0
+    /// Note numbers found drawn but missing from PDFKit's text.
+    public private(set) var markersRecovered = 0
+
+    /// Note numbers drawn small and raised that PDFKit's text leaves out
+    /// (InDesign's superscript figures can have no text behind them). Each
+    /// becomes a "*" note marker where it was drawn; endnote linking numbers
+    /// it from its place in the sequence.
+    func addMissingMarkers(to runs: inout [TextRun], bounds: CGRect, size: Double, map: PDFFontMap,
+                           covered: Set<Int>, position: (PDFFontMap.Span) -> Int?) {
+        let drawn = map.spansAlong(line: bounds)
+        var baselines: [Double: Int] = [:]
+        for span in drawn where abs(span.size - size) < 0.5 { baselines[span.baseline.rounded(), default: 0] += span.characters }
+        guard let baseline = baselines.max(by: { $0.value < $1.value })?.key else { return }
+        let markers = drawn.filter { span in
+            !covered.contains(span.id) && (1...3).contains(span.characters) && span.size < size * 0.85
+                && (span.rise > 0.5 || span.baseline > baseline + size * 0.15)
+        }
+        // Right to left, so earlier positions stay put.
+        for span in markers.sorted(by: { $0.x0 > $1.x0 }) {
+            guard let at = position(span) else { continue }
+            runs.insert(TextRun(text: "*", superscript: true), atCharacter: at)
+            markersRecovered += 1
+        }
+    }
 
     /// For a line whose characters couldn't be matched one by one: the pieces
     /// of text drawn along it, left to right, and how many characters each
@@ -274,7 +318,8 @@ public final class PDFExtractor {
     /// Rebuilds a line's styled runs from the fonts that really drew each
     /// character. Returns nil when too little of the line can be matched up.
     func realFonts(for text: String, selection: PDFSelection, bounds: CGRect, page: PDFPage, pageText: NSString,
-                   map: PDFFontMap, drift: inout Int) -> (runs: [TextRun], size: Double, family: String?)? {
+                   map: PDFFontMap, drift: inout Int)
+        -> (runs: [TextRun], size: Double, family: String?, spansUsed: Set<Int>, characterRight: [CGFloat?])? {
         guard !map.spans.isEmpty else { return nil }
         let line = text.trimmingCharacters(in: .newlines) as NSString
         guard line.length > 0, pageText.length >= line.length else { return nil }
@@ -336,17 +381,18 @@ public final class PDFExtractor {
             var raised: Bool
         }
         var spans: [PDFFontMap.Span?] = []
+        var characterRight: [CGFloat?] = []
         var letters = 0, matched = 0
         for k in 0..<line.length {
+            let box = characterBox(start + k).flatMap { usable($0) && inLine($0) ? $0 : nil }
+            characterRight.append(box?.maxX)
             let unit = line.character(at: k)
             if unit == 32 || unit == 9 || unit == 0xA0 {
                 spans.append(nil)
                 continue
             }
             letters += 1
-            let span = characterBox(start + k).flatMap { r in
-                usable(r) && inLine(r) ? map.span(at: CGPoint(x: r.midX, y: r.midY)) : nil
-            }
+            let span = box.flatMap { r in map.span(at: CGPoint(x: r.midX, y: r.midY)) }
             if span != nil { matched += 1 }
             spans.append(span)
         }
@@ -396,7 +442,8 @@ public final class PDFExtractor {
                                 superscript: style.raised && Self.isMarkerText(piece)))
             runStart = i
         }
-        return (runs, size, families.max(by: { $0.value < $1.value })?.key)
+        return (runs, size, families.max(by: { $0.value < $1.value })?.key,
+                Set(spans.compactMap { $0?.id }), characterRight)
     }
 
     /// Carries the PDF's own links (contents entries, note references, web
