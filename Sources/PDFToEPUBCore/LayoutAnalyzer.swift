@@ -498,6 +498,8 @@ public struct LayoutAnalyzer {
         var paragraphIsBullet = false
         var paragraphStartX = 0.0
         var paragraphLines: [TextLine] = []
+        var paragraphIsHanging = false   // a hanging indent: first line out, the rest in
+        var hangingPages = Set<Int>()
 
         let body = m.bodySize
         let spacing = m.lineSpacing
@@ -608,6 +610,26 @@ public struct LayoutAnalyzer {
                 } else if previous != nil, paragraphIsBullet, line.x < paragraphStartX - body * 0.3 {
                     // Text back out at the margin: the list is over.
                     startsNew = true
+                } else if previous != nil, paragraphIsHanging, m.indent(of: line) < body * 0.4 {
+                    // Back out at the margin after a hanging indent: the next entry.
+                    startsNew = true
+                } else if let p = previous, p.page == line.page, paragraphLines.count == 1,
+                          m.indent(of: p) < body * 0.4, m.indent(of: line) > body * 0.6,
+                          !m.isShort(p, slack: body * 1.5), line.y - p.y < spacing * 1.4,
+                          { () -> Bool in
+                              // The lines after it line up with it (a bibliography entry),
+                              // or this page already has such entries.
+                              guard index + 1 < pageLines.count else { return hangingPages.contains(page) }
+                              let next = pageLines[index + 1]
+                              if abs(m.indent(of: next) - m.indent(of: line)) < body * 0.4 && next.y - line.y < spacing * 1.4 {
+                                  return true
+                              }
+                              return hangingPages.contains(page) && m.indent(of: next) < body * 0.4
+                          }() {
+                    // A hanging indent: the entry carries on, set in.
+                    startsNew = false
+                    paragraphIsHanging = true
+                    hangingPages.insert(page)
                 } else if previous != nil, paragraphLines.count >= 2, isQuote(paragraphLines),
                           m.indent(of: line) < body * 0.4 {
                     // Text back out at the margin: the quotation is over.
@@ -679,6 +701,7 @@ public struct LayoutAnalyzer {
                     paragraphIsBullet = Self.startsWithBullet(line.text)
                     paragraphStartX = line.x
                     paragraphLines = [line]
+                    paragraphIsHanging = false
                     previous = line
                     paragraphIsBlockLines = false
                     continue

@@ -505,6 +505,24 @@ final class BlockQuoteTests: XCTestCase {
         XCTAssertTrue(blocks.contains { if case .paragraph(let runs, _) = $0 { return runs.joinedText.hasPrefix("Next page") } else { return false } }, "\(blocks)")
     }
 
+    /// Bibliography entries: first line at the margin, the rest set in. Each
+    /// entry is one paragraph, not a paragraph and a quotation.
+    func testHangingIndentEntries() {
+        body(5)
+        for (k, entry) in ["Aaron", "Baker", "Cole"].enumerated() {
+            add("\(entry), A. 1993. A Long Title of a Book That Runs All the Way Across the", x: 40)
+            if k != 1 { add("Line, Continued Here. City: Publisher, which also runs across.", x: 52, width: 328) }
+            add("Last line.", x: 52, width: 60)
+        }
+        let blocks = LayoutAnalyzer().analyze(lines: lines).flatMap(\.blocks)
+        XCTAssertFalse(blocks.contains { if case .quote = $0 { return true } else { return false } }, "\(blocks)")
+        let entries = blocks.compactMap { b -> String? in
+            if case .paragraph(let runs, _) = b, runs.joinedText.contains(", A. 1993") { return runs.joinedText } else { return nil }
+        }
+        XCTAssertEqual(entries.count, 3, "\(blocks)")
+        XCTAssertTrue(entries.allSatisfy { $0.hasSuffix("Last line.") }, "\(entries)")
+    }
+
     /// A short line after a space that runs on into a lower-case line is the
     /// start of a paragraph, even in a bold or different font.
     func testLineRunningOnIsNotAHeading() {
