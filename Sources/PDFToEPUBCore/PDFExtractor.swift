@@ -186,19 +186,26 @@ public final class PDFExtractor {
         guard line.length > 0, pageText.length >= line.length else { return nil }
 
         // Where the line sits in the page's text, to ask for each character's position.
+        let characterCount = page.numberOfCharacters
         let hint = page.characterIndex(at: CGPoint(x: bounds.minX + 1, y: bounds.midY))
         var start = NSNotFound
         if hint >= 0, hint + line.length <= pageText.length,
            pageText.substring(with: NSRange(location: hint, length: line.length)) == line as String {
             start = hint
         } else {
-            let center = hint >= 0 ? hint : 0
+            // Search near the hint, keeping the range inside the text (the hint
+            // counts characters PDFKit's way, which can run past the text).
+            let center = min(max(hint, 0), pageText.length)
             let lo = hint >= 0 ? max(0, center - 600) : 0
             let hi = hint >= 0 ? min(pageText.length, center + 600 + line.length) : pageText.length
+            guard hi > lo else { return nil }
             start = pageText.range(of: line as String, options: [.literal],
                                    range: NSRange(location: lo, length: hi - lo)).location
         }
         guard start != NSNotFound else { return nil }
+        func characterBox(_ index: Int) -> CGRect? {
+            index >= 0 && index < characterCount ? page.characterBounds(at: index) : nil
+        }
 
         // PDFKit's text and its character positions don't always count
         // characters the same way (line breaks can be counted differently),
@@ -214,10 +221,8 @@ public final class PDFExtractor {
         var bestOffset: Int?
         var bestScore = CGFloat.infinity
         for offset in -8...8 {
-            let first = start + offset, last = start + offset + lastInk
-            guard first >= 0 else { continue }
-            let a = page.characterBounds(at: first), b = page.characterBounds(at: last)
-            guard usable(a), usable(b) else { continue }
+            guard let a = characterBox(start + offset), let b = characterBox(start + offset + lastInk),
+                  usable(a), usable(b) else { continue }
             let score = abs(a.minX - bounds.minX) + abs(b.maxX - bounds.maxX)
                 + abs(a.midY - bounds.midY) + abs(b.midY - bounds.midY)
             if score < bestScore {
@@ -242,8 +247,9 @@ public final class PDFExtractor {
                 continue
             }
             letters += 1
-            let r = page.characterBounds(at: start + k)
-            let span = usable(r) ? map.span(at: CGPoint(x: r.midX, y: r.midY)) : nil
+            let span = characterBox(start + k).flatMap { r in
+                usable(r) ? map.span(at: CGPoint(x: r.midX, y: r.midY)) : nil
+            }
             if span != nil { matched += 1 }
             spans.append(span)
         }
@@ -262,22 +268,26 @@ public final class PDFExtractor {
         guard let size = sizes.max(by: { $0.value < $1.value })?.key,
               let baseline = baselines.max(by: { $0.value < $1.value })?.key else { return nil }
 
-        // Group characters into runs of one style. Spaces and unmatched
-        // characters take the style of what comes before them.
+        // Group characters into runs of one style.
         var styles: [Style?] = spans.map { span in
             guard let span else { return nil }
             let raised = span.rise > 0.5
                 || (span.size < size * 0.85 && span.baseline > baseline + size * 0.15)
             return Style(bold: span.font.bold || span.outlined, italic: span.font.italic || span.slanted, raised: raised)
         }
-        if let first = styles.firstIndex(where: { $0 != nil }) {
-            for i in 0..<first { styles[i] = styles[first] }
-        }
-        for i in styles.indices where styles[i] == nil && i > 0 { styles[i] = styles[i - 1] }
-        // A space between two runs of the same style belongs to that style.
-        for i in styles.indices where i > 0 && i + 1 < styles.count && spans[i] == nil
-            && styles[i - 1] != styles[i + 1] && styles[i + 1] != nil {
-            styles[i] = styles[i - 1]
+        // A space (or unmatched character) takes the style around it; between
+        // two styles, the plainer one, so "an *italic* word" keeps its spaces roman.
+        func weight(_ style: Style) -> Int { (style.bold ? 1 : 0) + (style.italic ? 1 : 0) + (style.raised ? 1 : 0) }
+        let known = styles
+        for i in styles.indices where known[i] == nil {
+            let before = known[..<i].last { $0 != nil } ?? nil
+            let after = known[(i + 1)...].first { $0 != nil } ?? nil
+            switch (before, after) {
+            case let (b?, a?): styles[i] = b == a ? b : (weight(a) < weight(b) ? a : b)
+            case let (b?, nil): styles[i] = b
+            case let (nil, a?): styles[i] = a
+            default: styles[i] = nil
+            }
         }
 
         var runs: [TextRun] = []

@@ -66,7 +66,7 @@ Drag **PDF to EPUB.app** into Applications.
 
 ### Download from CI
 
-Every push builds the app on GitHub Actions: open the latest run under **Actions** and download the **PDF-to-EPUB-app** artifact. That build is signed ad hoc, not notarized, so the first time you open it macOS will say it can't check it. Right-click the app, choose **Open**, then **Open** again. You can also clear the quarantine flag:
+GitHub Actions builds the app when started by hand (**Actions → CI → Run workflow**) or when a version tag like `v1.0` is pushed; macOS build minutes are costly, so it doesn't run on every push. Open the run and download the **PDF-to-EPUB-app** artifact. That build is signed ad hoc, not notarized, so the first time you open it macOS will say it can't check it. Right-click the app, choose **Open**, then **Open** again. You can also clear the quarantine flag:
 
 ```sh
 xattr -dr com.apple.quarantine "/Applications/PDF to EPUB.app"

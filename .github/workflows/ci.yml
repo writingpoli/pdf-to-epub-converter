@@ -1,9 +1,11 @@
 name: CI
 
+# macOS minutes count ten times against the plan, so CI runs only when
+# started by hand (Actions → CI → Run workflow) or for a version tag.
 on:
-  push:
-  pull_request:
   workflow_dispatch:
+  push:
+    tags: ["v*"]
 
 jobs:
   macos:
@@ -14,12 +16,17 @@ jobs:
       - name: Build
         run: swift build
 
+      - name: Test
+        run: swift test
+
       - name: Diagnostic reports for sample pages
+        if: always()
         run: |
           swift run pdf2epub Tests/Fixtures/alice-sample.pdf --diagnose 10
           swift run pdf2epub Tests/Fixtures/embedded-fonts.pdf --diagnose 1
 
       - name: Show what PDFKit reads from the note pages
+        if: always()
         run: |
           swift run pdf2epub Tests/Fixtures/alice-sample.pdf --dump-lines lines.json
           python3 - <<'PY'
@@ -33,9 +40,6 @@ jobs:
                   runs = [(r["text"][-12:], "sup" if r.get("superscript") else "") for r in l["runs"]]
                   print(l["page"], round(l["y"], 1), round(l["fontSize"], 1), round(l["x"], 1), round(l["width"], 1), runs[-3:])
           PY
-
-      - name: Test
-        run: swift test
 
       - name: Build the app
         run: scripts/build-app.sh universal
@@ -65,11 +69,3 @@ jobs:
         with:
           name: sample-epubs
           path: dist/samples/*.epub
-
-  linux-core:
-    # The layout and EPUB code is plain Swift, so it's also checked on Linux.
-    runs-on: ubuntu-latest
-    container: swift:6.0
-    steps:
-      - uses: actions/checkout@v4
-      - run: swift test
