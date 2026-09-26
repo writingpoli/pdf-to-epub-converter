@@ -89,6 +89,24 @@ final class PDFFontMap {
         return best
     }
 
+    /// The pieces of text drawn along a line (baselines inside its box), left to right.
+    func spansAlong(line bounds: CGRect) -> [Span] {
+        let low = Double(bounds.minY) - 1, high = Double(bounds.maxY)
+        let left = Double(bounds.minX) - 1, right = Double(bounds.maxX) + 1
+        guard low.isFinite, high.isFinite, left.isFinite, right.isFinite, abs(low) < 100_000, abs(high) < 100_000
+        else { return [] }
+        var found: [Span] = []
+        for k in Int((low / Self.bucketHeight).rounded(.down))...Int((high / Self.bucketHeight).rounded(.down)) {
+            for i in buckets[k] ?? [] {
+                let span = spans[i]
+                if span.characters > 0, span.baseline >= low, span.baseline <= high, span.x1 > left, span.x0 < right {
+                    found.append(span)
+                }
+            }
+        }
+        return found.sorted { $0.x0 < $1.x0 }
+    }
+
     /// "ABCDEF+MinionPro-It" -> "MinionPro"
     static func family(of fontName: String) -> String {
         var name = fontName

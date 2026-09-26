@@ -1,5 +1,6 @@
 #if canImport(PDFKit)
 import XCTest
+import PDFKit
 @testable import PDFToEPUBCore
 
 /// End-to-end: real PDFs through PDFKit, out to an EPUB, unpacked with `unzip`.
@@ -114,6 +115,21 @@ final class ConversionTests: XCTestCase {
         XCTAssertNotNil(text.range(of: "<h[1-3][^>]*>A Section at Body Size</h[1-3]>", options: .regularExpression),
                         "bold section heading at body size")
         XCTAssertFalse(text.contains("<strong>The first paragraph"), "body text stays regular")
+    }
+
+    /// The fallback for lines that can't be matched character by character:
+    /// styles worked out from the order of the text drawn along the line.
+    func testEstimatedFontsFromDrawingOrder() throws {
+        let document = try XCTUnwrap(PDFDocument(url: fixtures.appendingPathComponent("embedded-fonts.pdf")))
+        let page = try XCTUnwrap(document.page(at: 0))
+        let lines = page.selection(for: page.bounds(for: .cropBox))?.selectionsByLine() ?? []
+        let selection = try XCTUnwrap(lines.first { $0.string?.contains("set in the italic font") == true })
+        let extractor = PDFExtractor(document: document)
+        let estimate = try XCTUnwrap(extractor.estimatedFonts(for: selection.string ?? "", bounds: selection.bounds(for: page),
+                                                              map: PDFFontMap(page: page)))
+        let italic = estimate.runs.filter(\.italic).map(\.text).joined()
+        XCTAssertEqual(italic.trimmingCharacters(in: .whitespaces), "italics", "\(estimate.runs)")
+        XCTAssertEqual(estimate.family, "Serif")
     }
 
     func testTitleAndAuthorOverrides() throws {

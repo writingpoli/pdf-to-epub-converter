@@ -163,6 +163,11 @@ public final class PDFExtractor {
                 fontSize = real.size
                 fontName = real.family
                 linesMatched += 1
+            } else if let estimate = estimatedFonts(for: string, bounds: bounds, map: fontMap) {
+                runs = estimate.runs
+                fontSize = estimate.size
+                fontName = estimate.family
+                linesEstimated += 1
             } else if !fontMap.spans.isEmpty {
                 // The page's real fonts are known but this line couldn't be
                 // matched to one; PDFKit's stand-in ("Helvetica") would make it
@@ -188,6 +193,83 @@ public final class PDFExtractor {
     /// Lines read so far, and how many were matched to the fonts that drew them.
     public private(set) var linesSeen = 0
     public private(set) var linesMatched = 0
+    /// Lines whose fonts were worked out from the order of the text drawn along them.
+    public private(set) var linesEstimated = 0
+
+    /// For a line whose characters couldn't be matched one by one: the pieces
+    /// of text drawn along it, left to right, and how many characters each
+    /// drew, say roughly which characters are in which font. Each word then
+    /// takes the style most of its characters have, so a count that's off by
+    /// a ligature or two doesn't spill italics onto the next word.
+    func estimatedFonts(for text: String, bounds: CGRect, map: PDFFontMap) -> (runs: [TextRun], size: Double, family: String?)? {
+        let line = text.trimmingCharacters(in: .newlines) as NSString
+        let drawn = map.spansAlong(line: bounds)
+        let total = drawn.reduce(0) { $0 + $1.characters }
+        guard line.length > 0, total > 0, abs(total - line.length) <= max(3, line.length / 6) else { return nil }
+        var owner: [Int] = []
+        for (i, span) in drawn.enumerated() { owner += Array(repeating: i, count: span.characters) }
+        let scale = Double(owner.count) / Double(line.length)
+
+        var sizes: [Double: Int] = [:], families: [String: Int] = [:]
+        for span in drawn {
+            sizes[(span.size * 2).rounded() / 2, default: 0] += span.characters
+            families[PDFFontMap.family(of: span.font.name), default: 0] += span.characters
+            drawnFonts[span.font.name, default: FontReport(name: span.font.name, characters: 0,
+                                                           bold: span.font.bold || span.outlined,
+                                                           italic: span.font.italic || span.slanted)].characters += span.characters
+        }
+        guard let size = sizes.max(by: { $0.value < $1.value })?.key else { return nil }
+        let baseline = drawn.filter { abs($0.size - size) < 0.5 }.map(\.baseline).max() ?? drawn[0].baseline
+
+        func isSpace(_ unit: unichar) -> Bool { unit == 32 || unit == 9 || unit == 0xA0 }
+        struct Style: Equatable { var bold = false, italic = false, raised = false }
+        var styles = (0..<line.length).map { k -> Style in
+            let span = drawn[owner[min(owner.count - 1, Int((Double(k) + 0.5) * scale))]]
+            let raised = span.rise > 0.5 || (span.size < size * 0.85 && span.baseline > baseline + size * 0.15)
+            let piece = line.substring(with: NSRange(location: k, length: 1))
+            return Style(bold: span.font.bold || span.outlined, italic: span.font.italic || span.slanted,
+                         raised: raised && Self.isMarkerText(piece))
+        }
+        // Each word takes its majority style (ties go to the plainer one); raised
+        // note numbers keep their own.
+        var k = 0
+        while k < line.length {
+            guard !isSpace(line.character(at: k)) else { k += 1; continue }
+            var end = k
+            while end < line.length, !isSpace(line.character(at: end)) { end += 1 }
+            let word = (k..<end).filter { !styles[$0].raised }
+            if !word.isEmpty {
+                let bold = word.filter { styles[$0].bold }.count * 2 > word.count
+                let italic = word.filter { styles[$0].italic }.count * 2 > word.count
+                for i in word { styles[i].bold = bold; styles[i].italic = italic }
+            }
+            k = end
+        }
+        // Spaces take the plainer style of the words either side.
+        for i in 0..<line.length where isSpace(line.character(at: i)) {
+            let before = i > 0 ? styles[i - 1] : nil
+            let after = i + 1 < line.length ? styles[i + 1] : nil
+            var style = Style()
+            if let before, let after {
+                style.bold = before.bold && after.bold
+                style.italic = before.italic && after.italic
+            } else if let only = before ?? after {
+                style.bold = only.bold
+                style.italic = only.italic
+            }
+            styles[i] = style
+        }
+
+        var runs: [TextRun] = []
+        var runStart = 0
+        for i in 1...styles.count where i == styles.count || styles[i] != styles[runStart] {
+            let piece = line.substring(with: NSRange(location: runStart, length: i - runStart))
+            let style = styles[runStart]
+            runs.append(TextRun(text: piece, bold: style.bold, italic: style.italic, superscript: style.raised))
+            runStart = i
+        }
+        return (runs, size, families.max(by: { $0.value < $1.value })?.key)
+    }
 
     /// Rebuilds a line's styled runs from the fonts that really drew each
     /// character. Returns nil when too little of the line can be matched up.

@@ -83,7 +83,8 @@ public enum Diagnostics {
         let analyzer = LayoutAnalyzer()
         let lines = analyzer.removeFurniture(wide, bodySize: LayoutAnalyzer.bodyFontSize(wide))
             .filter { window.contains($0.page) }
-        out += "\nLines matched to the fonts that drew them: \(extractor.linesMatched) of \(extractor.linesSeen)\n"
+        out += "\nLines matched to the fonts that drew them: \(extractor.linesMatched) of \(extractor.linesSeen)"
+        out += ", and \(extractor.linesEstimated) more worked out from the order of the text drawn\n"
         out += "Fonts in these pages' drawing instructions (name | characters | read as):\n"
         if extractor.drawnFonts.isEmpty { out += "  none matched\n" }
         for font in extractor.drawnFonts.values.sorted(by: { $0.characters > $1.characters }) {

@@ -667,6 +667,12 @@ public struct LayoutAnalyzer {
 
                 if startsNew {
                     flush()
+                    // The source of a quotation, on its own line after it, stays with it.
+                    if text.count <= 80, let last = blocks.last, case .quote(let quoted) = last.block, last.page == page,
+                       (text.hasPrefix("(") && text.hasSuffix(")")) || text.hasPrefix("—") || text.hasPrefix("–") {
+                        blocks[blocks.count - 1].block = .quote(Self.compact(quoted + [TextRun(text: "\n")] + line.runs))
+                        continue
+                    }
                     paragraph = line.runs
                     paragraphIndented = m.indent(of: line) > body * 0.6
                     paragraphStart = (line.page, line.y)

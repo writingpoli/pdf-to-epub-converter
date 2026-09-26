@@ -436,6 +436,27 @@ final class BlockQuoteTests: XCTestCase {
         XCTAssertTrue(blocks.contains { if case .paragraph(let runs, _) = $0 { return runs.joinedText.hasPrefix("In other words") } else { return false } })
     }
 
+    /// A quotation's source at the foot of a page stays with the quotation,
+    /// not with the paragraph that carries on over the page.
+    func testSourceAtFootOfPageStaysWithQuote() {
+        body(5)
+        add("A long quotation that is set in from both margins and runs", x: 58, width: 310, size: 9, gap: 12)
+        add("until it ends here.", x: 58, width: 100, size: 9, gap: 12)
+        add("(Somebody 1993: 46)", x: 290, width: 80, size: 9, gap: 12)
+        y = 60
+        for i in 0..<6 {
+            lines.append(TextLine(runs: [TextRun(text: "Next page text line \(i) that runs the whole way across")],
+                                  page: 1, x: 40, y: y, width: 340, height: 11.5, fontSize: 10,
+                                  pageWidth: 420, pageHeight: 595, fontName: "MinionPro"))
+            y += 13
+        }
+        let blocks = LayoutAnalyzer().analyze(lines: lines).flatMap(\.blocks)
+        let quotes = blocks.compactMap { b -> String? in if case .quote(let runs) = b { return runs.joinedText } else { return nil } }
+        XCTAssertEqual(quotes.count, 1, "\(blocks)")
+        XCTAssertTrue(quotes.first?.hasSuffix("(Somebody 1993: 46)") == true, "\(blocks)")
+        XCTAssertTrue(blocks.contains { if case .paragraph(let runs, _) = $0 { return runs.joinedText.hasPrefix("Next page") } else { return false } }, "\(blocks)")
+    }
+
     /// A short line after a space that runs on into a lower-case line is the
     /// start of a paragraph, even in a bold or different font.
     func testLineRunningOnIsNotAHeading() {
