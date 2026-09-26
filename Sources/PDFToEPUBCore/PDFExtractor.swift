@@ -235,6 +235,22 @@ public final class PDFExtractor {
         // Right to left, so earlier positions stay put.
         for span in markers.sorted(by: { $0.x0 > $1.x0 }) {
             guard let at = position(span) else { continue }
+            // PDFKit's text may have it after all, a few characters off: a number
+            // or a raised run right there means it isn't missing.
+            var offset = 0
+            var nearby = false
+            for run in runs {
+                let range = offset..<(offset + run.text.count)
+                if range.overlaps((at - 3)..<(at + 3)) && (run.superscript || run.text.contains(where: \.isNumber)) {
+                    let chars = Array(run.text)
+                    nearby = run.superscript || (max(at - 3, offset)..<min(at + 3, range.upperBound)).contains { i in
+                        i - offset < chars.count && chars[i - offset].isNumber
+                    }
+                    if nearby { break }
+                }
+                offset += run.text.count
+            }
+            guard !nearby else { continue }
             runs.insert(TextRun(text: "*", superscript: true), atCharacter: at)
             markersRecovered += 1
         }
