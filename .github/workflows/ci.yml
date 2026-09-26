@@ -1,7 +1,8 @@
 name: CI
 
 # Runs when started by hand (Actions → CI → Run workflow) or for a version
-# tag. A tag like v1.2.0 also publishes the app on the Releases page.
+# tag. Publishes the app on the Releases page for a tag like v1.2.0, or for
+# a manual run given a version number.
 on:
   workflow_dispatch:
     inputs:
@@ -9,6 +10,10 @@ on:
         description: "Build and upload the app (off for a quicker, cheaper test-only run)"
         type: boolean
         default: true
+      release:
+        description: "Version to publish on the Releases page, such as 1.2.0 (leave empty for none)"
+        type: string
+        default: ""
   push:
     tags: ["v*"]
 
@@ -52,14 +57,17 @@ jobs:
           PY
 
       - name: Build the app
-        if: ${{ github.event_name != 'workflow_dispatch' || inputs.app }}
+        if: ${{ github.event_name != 'workflow_dispatch' || inputs.app || inputs.release != '' }}
+        env:
+          RELEASE: ${{ inputs.release }}
         run: |
-          # A version tag (v1.2.0) sets the app's version.
+          # A version tag (v1.2.0) or a release version sets the app's version.
           if [[ "$GITHUB_REF" == refs/tags/v* ]]; then export VERSION="${GITHUB_REF_NAME#v}"; fi
+          if [[ -n "$RELEASE" ]]; then export VERSION="${RELEASE#v}"; fi
           scripts/build-app.sh universal
 
       - name: Convert the sample PDFs
-        if: ${{ github.event_name != 'workflow_dispatch' || inputs.app }}
+        if: ${{ github.event_name != 'workflow_dispatch' || inputs.app || inputs.release != '' }}
         run: |
           mkdir -p dist/samples
           CLI="dist/PDF to EPUB.app/Contents/Resources/pdf2epub"
@@ -67,33 +75,36 @@ jobs:
           "$CLI" Tests/Fixtures/alice-no-bookmarks.pdf -o dist/samples/alice-no-bookmarks.epub
 
       - name: Validate with EPUBCheck
-        if: ${{ github.event_name != 'workflow_dispatch' || inputs.app }}
+        if: ${{ github.event_name != 'workflow_dispatch' || inputs.app || inputs.release != '' }}
         run: |
           curl -sSL -o epubcheck.zip https://github.com/w3c/epubcheck/releases/download/v5.1.0/epubcheck-5.1.0.zip
           unzip -q epubcheck.zip
           for f in dist/samples/*.epub; do java -jar epubcheck-5.1.0/epubcheck.jar "$f"; done
 
       - name: Package
-        if: ${{ github.event_name != 'workflow_dispatch' || inputs.app }}
+        if: ${{ github.event_name != 'workflow_dispatch' || inputs.app || inputs.release != '' }}
         run: ditto -c -k --keepParent "dist/PDF to EPUB.app" "dist/PDF-to-EPUB.zip"
 
       - uses: actions/upload-artifact@v4
-        if: ${{ github.event_name != 'workflow_dispatch' || inputs.app }}
+        if: ${{ github.event_name != 'workflow_dispatch' || inputs.app || inputs.release != '' }}
         with:
           name: PDF-to-EPUB-app
           path: dist/PDF-to-EPUB.zip
 
       - uses: actions/upload-artifact@v4
-        if: ${{ github.event_name != 'workflow_dispatch' || inputs.app }}
+        if: ${{ github.event_name != 'workflow_dispatch' || inputs.app || inputs.release != '' }}
         with:
           name: sample-epubs
           path: dist/samples/*.epub
 
       - name: Publish the release
-        if: startsWith(github.ref, 'refs/tags/v')
+        if: ${{ startsWith(github.ref, 'refs/tags/v') || inputs.release != '' }}
         env:
           GH_TOKEN: ${{ github.token }}
+          RELEASE: ${{ inputs.release }}
         run: |
+          TAG="$GITHUB_REF_NAME"
+          if [[ -n "$RELEASE" ]]; then TAG="v${RELEASE#v}"; fi
           cat > notes.md <<'NOTES'
           Download **PDF-to-EPUB.zip** below, unzip it and drag **PDF to EPUB.app** into Applications. Needs macOS 13 or later.
 
@@ -101,5 +112,5 @@ jobs:
 
           Personal, non-commercial use only; see [LICENSE](https://github.com/${{ github.repository }}/blob/main/LICENSE).
           NOTES
-          gh release create "$GITHUB_REF_NAME" dist/PDF-to-EPUB.zip \
-            --title "PDF to EPUB ${GITHUB_REF_NAME#v}" --notes-file notes.md --generate-notes
+          gh release create "$TAG" dist/PDF-to-EPUB.zip --target "$GITHUB_SHA" \
+            --title "PDF to EPUB ${TAG#v}" --notes-file notes.md --generate-notes

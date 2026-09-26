@@ -76,7 +76,7 @@ Drag **PDF to EPUB.app** into Applications.
 
 ### Test builds
 
-GitHub Actions also builds the app when started by hand (**Actions → CI → Run workflow**). Open the run and download the **PDF-to-EPUB-app** artifact (you need to be signed in to GitHub). Pushing a version tag such as `v1.2.0` builds the app and publishes it on the Releases page.
+GitHub Actions also builds the app when started by hand (**Actions → CI → Run workflow**). Open the run and download the **PDF-to-EPUB-app** artifact (you need to be signed in to GitHub). To publish a release, run the workflow with a version number such as `1.2.0` in **Version to publish** (or push a tag such as `v1.2.0`); it builds the app with that version and publishes it on the Releases page.
 
 ## When a book comes out wrong
 
