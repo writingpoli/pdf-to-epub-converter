@@ -14,6 +14,9 @@ jobs:
       - name: Build
         run: swift build
 
+      - name: Diagnostic report for a sample page
+        run: swift run pdf2epub Tests/Fixtures/alice-sample.pdf --diagnose 10
+
       - name: Show what PDFKit reads from the note pages
         run: |
           swift run pdf2epub Tests/Fixtures/alice-sample.pdf --dump-lines lines.json

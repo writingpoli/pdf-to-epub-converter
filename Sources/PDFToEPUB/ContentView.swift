@@ -100,6 +100,9 @@ struct ContentView: View {
                         .lineLimit(1)
                         .truncationMode(.middle)
                     Spacer()
+                    Button("Diagnostics…") { model.copyDiagnostics() }
+                        .controlSize(.small)
+                        .help("Copy a report on how one page reads, to help fix conversion problems")
                     Button("Choose Another…") { model.choosePDF() }
                         .controlSize(.small)
                 }

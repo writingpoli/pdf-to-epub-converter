@@ -17,6 +17,8 @@ usage: pdf2epub <input.pdf> [options]
   --ignore-bookmarks    find chapters from headings even if the PDF has bookmarks
   --open                open the result in Apple Books when done
   --verbose             print every step with the time it started
+  --diagnose <page>     print a report on one page's fonts and layout (text
+                        masked) instead of converting
   --dump-lines <file>   save the text lines read from the PDF as JSON (for
                         diagnosing layout problems) instead of converting
 
@@ -39,6 +41,7 @@ var ignoreBookmarks = false
 var openInBooks = false
 var verbose = false
 var dumpLines: String?
+var diagnosePage: Int?
 var linesJSON: String?   // debugging aid: run layout on lines dumped by another tool
 
 while !arguments.isEmpty {
@@ -58,6 +61,10 @@ while !arguments.isEmpty {
     case "--open": openInBooks = true
     case "--verbose": verbose = true
     case "--dump-lines": dumpLines = value()
+    case "--diagnose":
+        let text = value()
+        guard let page = Int(text) else { fail("--diagnose needs a page number, not \(text)") }
+        diagnosePage = page
     case "--lines-json": linesJSON = value()
     case "-h", "--help":
         print(usage)
@@ -114,6 +121,11 @@ options.author = author
 options.includeCover = includeCover
 options.extraction.recognizeScannedPages = ocr
 options.layout = layout
+
+if let diagnosePage {
+    print(Diagnostics.report(for: inputURL, page: diagnosePage))
+    exit(0)
+}
 
 if let dumpLines {
     do {

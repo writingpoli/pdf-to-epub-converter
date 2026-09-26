@@ -72,6 +72,10 @@ Every push builds the app on GitHub Actions: open the latest run under **Actions
 xattr -dr com.apple.quarantine "/Applications/PDF to EPUB.app"
 ```
 
+## When a book comes out wrong
+
+Choose the PDF in the app and click **Diagnostics…**. Give it the number of a page (as Preview shows it) where something goes wrong: missing italics, a heading run into the text, a stray page number. It copies a short report to the clipboard: the PDF's fonts as macOS reports them, the lines of that page with their sizes and positions, and what the converter made of them. The text is masked (“Xxxxx xxx”), so the report shows layout without the book's words. Paste it into an issue or a message to whoever is helping.
+
 ## Limitations
 
 The converter works well for what most PDF books are: a single column of prose. Some layouts are beyond what can be recovered from a PDF reliably:

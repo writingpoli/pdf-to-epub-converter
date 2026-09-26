@@ -122,6 +122,34 @@ final class ConverterModel: ObservableObject {
         status = "Stopping…"
     }
 
+    // MARK: - Diagnostics
+
+    /// Asks for a page, then copies a diagnostic report on it to the clipboard.
+    func copyDiagnostics() {
+        guard let inputURL else { return }
+        let alert = NSAlert()
+        alert.messageText = "Which page looks wrong?"
+        alert.informativeText = "Enter the page number as Preview shows it, for a page where italics or a heading "
+            + "come out wrong. The report copied to the clipboard shows fonts and layout, with the text masked."
+        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 120, height: 24))
+        field.placeholderString = "Page number"
+        alert.accessoryView = field
+        alert.addButton(withTitle: "Copy Report")
+        alert.addButton(withTitle: "Cancel")
+        alert.window.initialFirstResponder = field
+        guard alert.runModal() == .alertFirstButtonReturn,
+              let page = Int(field.stringValue.trimmingCharacters(in: .whitespaces)) else { return }
+
+        let report = Diagnostics.report(for: inputURL, page: page)
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(report, forType: .string)
+
+        let done = NSAlert()
+        done.messageText = "Report copied"
+        done.informativeText = "Paste it into your message to Claude. It's \(report.split(separator: "\n").count) lines long."
+        done.runModal()
+    }
+
     // MARK: - Results
 
     func openInBooks(_ url: URL) {
