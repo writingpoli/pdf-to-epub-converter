@@ -396,3 +396,54 @@ final class BulletTests: XCTestCase {
         #endif
     }
 }
+
+final class BlockQuoteTests: XCTestCase {
+    private var lines: [TextLine] = []
+    private var y = 60.0
+
+    private func add(_ text: String, x: Double, width: Double = 340, size: Double = 10, font: String? = "MinionPro",
+                     gap: Double = 13) {
+        lines.append(TextLine(runs: [TextRun(text: text)], page: 0, x: x, y: y, width: width, height: 11.5,
+                              fontSize: size, pageWidth: 420, pageHeight: 595, fontName: font))
+        y += gap
+    }
+
+    private func body(_ count: Int) {
+        for i in 0..<count {
+            add("Body text line \(i) that runs the whole way across the page", x: i == 0 ? 52 : 40,
+                width: i == count - 1 ? 200 : 340, gap: i == count - 1 ? 19 : 13)
+        }
+    }
+
+    /// Text set in from the margin on every line, then its source, then the
+    /// body again: a quotation, not paragraphs or a heading.
+    func testIndentedPassageIsAQuote() {
+        body(5)
+        add("A long quotation that is set in from both margins and runs", x: 58, width: 310, size: 9, gap: 12)
+        add("over several lines, all of them starting at the same place,", x: 58, width: 310, size: 9, gap: 12)
+        add("until it ends here.", x: 58, width: 100, size: 9, gap: 12)
+        add("(Somebody 1993: 58)", x: 58, width: 80, size: 9, gap: 19)
+        // Back at the margin, after space, and unmatched to a font: once taken for a heading.
+        add("In other words, the argument goes, and the question is, as always rather", x: 40, font: nil)
+        add("more complicated than it looks from the outside, which is the point", x: 40)
+        body(3)
+        let blocks = LayoutAnalyzer().analyze(lines: lines).flatMap(\.blocks)
+        XCTAssertFalse(blocks.contains { if case .heading = $0 { return true } else { return false } }, "\(blocks)")
+        let quotes = blocks.compactMap { b -> String? in if case .quote(let runs) = b { return runs.joinedText } else { return nil } }
+        XCTAssertEqual(quotes.count, 1, "\(blocks)")
+        XCTAssertTrue(quotes.first?.hasPrefix("A long quotation") == true)
+        XCTAssertTrue(quotes.first?.hasSuffix("ends here.\n(Somebody 1993: 58)") == true, "\(quotes)")
+        XCTAssertTrue(blocks.contains { if case .paragraph(let runs, _) = $0 { return runs.joinedText.hasPrefix("In other words") } else { return false } })
+    }
+
+    /// A short line after a space that runs on into a lower-case line is the
+    /// start of a paragraph, even in a bold or different font.
+    func testLineRunningOnIsNotAHeading() {
+        body(5)
+        add("Section Like Opening Words", x: 40, width: 150, font: "Helvetica", gap: 13)
+        add("carry on in lower case, so this is one paragraph after all.", x: 40)
+        body(3)
+        let blocks = LayoutAnalyzer().analyze(lines: lines).flatMap(\.blocks)
+        XCTAssertFalse(blocks.contains { if case .heading = $0 { return true } else { return false } }, "\(blocks)")
+    }
+}

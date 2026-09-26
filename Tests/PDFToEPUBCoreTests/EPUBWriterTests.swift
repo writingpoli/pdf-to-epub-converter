@@ -13,6 +13,7 @@ final class EPUBWriterTests: XCTestCase {
                                         TextRun(text: " & bold", bold: true)], indented: false),
                             .sceneBreak,
                             .paragraph([TextRun(text: "Line one\nline two")], indented: true),
+                            .quote([TextRun(text: "Quoted\n(Source)")]),
                         ]),
                         Chapter(title: "Two", blocks: [.image(image, alt: "A \"quoted\" picture")]),
                     ])
@@ -84,6 +85,7 @@ final class EPUBWriterTests: XCTestCase {
         XCTAssertTrue(chapter.contains("<p class=\"noindent\">Plain <em>slanted</em><strong> &amp; bold</strong></p>"), chapter)
         XCTAssertTrue(chapter.contains("<hr class=\"scene\"/>"))
         XCTAssertTrue(chapter.contains("<p class=\"noindent\">Line one<br/>line two</p>"), chapter)
+        XCTAssertTrue(chapter.contains("<blockquote><p>Quoted<br/>(Source)</p></blockquote>"), chapter)
         let opf = try XCTUnwrap(storedText(data, "OEBPS/content.opf"))
         XCTAssertTrue(opf.contains("<dc:title>Tom &amp; Jerry &lt;Tales&gt;</dc:title>"), opf)
         XCTAssertTrue(opf.contains("<dc:creator id=\"creator\">A. Writer</dc:creator>"))

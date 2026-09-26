@@ -163,6 +163,11 @@ public final class PDFExtractor {
                 fontSize = real.size
                 fontName = real.family
                 linesMatched += 1
+            } else if !fontMap.spans.isEmpty {
+                // The page's real fonts are known but this line couldn't be
+                // matched to one; PDFKit's stand-in ("Helvetica") would make it
+                // look like a different typeface, and so a heading.
+                fontName = nil
             }
 
             lines.append(TextLine(runs: runs, page: index,

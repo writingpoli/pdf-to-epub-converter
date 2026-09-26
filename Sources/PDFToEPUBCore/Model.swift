@@ -204,6 +204,8 @@ public struct OutlineEntry: Codable, Equatable {
 public enum Block: Equatable {
     case heading(level: Int, runs: [TextRun])
     case paragraph([TextRun], indented: Bool)
+    /// A block quotation: text set in from the margins.
+    case quote([TextRun])
     case sceneBreak
     case image(BookImage, alt: String)
     /// Gives the block that follows an id links can point at.
@@ -213,7 +215,7 @@ public enum Block: Equatable {
 
     var runs: [TextRun]? {
         switch self {
-        case .heading(_, let runs), .paragraph(let runs, _), .footnote(_, let runs): return runs
+        case .heading(_, let runs), .paragraph(let runs, _), .quote(let runs), .footnote(_, let runs): return runs
         default: return nil
         }
     }
@@ -222,6 +224,7 @@ public enum Block: Equatable {
         switch self {
         case .heading(let level, _): return .heading(level: level, runs: runs)
         case .paragraph(_, let indented): return .paragraph(runs, indented: indented)
+        case .quote: return .quote(runs)
         case .footnote(let id, _): return .footnote(id: id, runs: runs)
         default: return self
         }

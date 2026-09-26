@@ -72,11 +72,17 @@ public enum Diagnostics {
         }
 
         // What the converter makes of this page and its neighbours.
+        // Running heads are recognised by repeating, so read a wider stretch
+        // of pages to find them, then analyse only the pages reported.
         let extractor = PDFExtractor(document: document)
-        var lines: [TextLine] = []
-        for index in max(0, pageNumber - 2)...min(document.pageCount - 1, pageNumber) {
-            if let p = document.page(at: index) { lines += extractor.textLines(on: p, index: index) }
+        let window = max(0, pageNumber - 2)...min(document.pageCount - 1, pageNumber)
+        var wide: [TextLine] = []
+        for index in max(0, pageNumber - 9)...min(document.pageCount - 1, pageNumber + 7) {
+            if let p = document.page(at: index) { wide += extractor.textLines(on: p, index: index) }
         }
+        let analyzer = LayoutAnalyzer()
+        let lines = analyzer.removeFurniture(wide, bodySize: LayoutAnalyzer.bodyFontSize(wide))
+            .filter { window.contains($0.page) }
         out += "\nLines matched to the fonts that drew them: \(extractor.linesMatched) of \(extractor.linesSeen)\n"
         out += "Fonts in these pages' drawing instructions (name | characters | read as):\n"
         if extractor.drawnFonts.isEmpty { out += "  none matched\n" }
@@ -85,11 +91,12 @@ public enum Diagnostics {
             out += "  \(font.name) | \(font.characters) | \(readAs.isEmpty ? "regular" : readAs.joined(separator: " "))\n"
         }
         out += "\nConverter's reading of pages \(max(1, pageNumber - 1))–\(min(document.pageCount, pageNumber + 1)):\n"
-        for chapter in LayoutAnalyzer().analyze(lines: lines) {
+        for chapter in analyzer.analyze(lines: lines) {
             for block in chapter.blocks {
                 switch block {
                 case .heading(let level, let runs): out += "  heading \(level): \(describe(runs))\n"
                 case .paragraph(let runs, _): out += "  paragraph: \(describe(runs))\n"
+                case .quote(let runs): out += "  block quote: \(describe(runs))\n"
                 case .footnote(_, let runs): out += "  footnote: \(describe(runs))\n"
                 case .sceneBreak: out += "  scene break\n"
                 case .image: out += "  picture\n"

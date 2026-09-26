@@ -497,19 +497,45 @@ public struct LayoutAnalyzer {
         var paragraphIsBlockLines = false
         var paragraphIsBullet = false
         var paragraphStartX = 0.0
-
-        func flush() {
-            if !paragraph.isEmpty {
-                blocks.append(PositionedBlock(block: .paragraph(Self.compact(paragraph), indented: paragraphIndented),
-                                              page: paragraphStart.page, y: paragraphStart.y))
-            }
-            paragraph = []
-            previous = nil
-            paragraphIsBlockLines = false
-        }
+        var paragraphLines: [TextLine] = []
 
         let body = m.bodySize
         let spacing = m.lineSpacing
+
+        /// Whether the lines are a block quotation: every line set in from the
+        /// margin (not just the first), or a line of smaller type set in.
+        func isQuote(_ lines: [TextLine]) -> Bool {
+            guard let first = lines.first, !Self.startsWithBullet(first.text) else { return false }
+            let indents = lines.map(m.indent(of:))
+            guard indents.allSatisfy({ $0 > body * 0.8 }) else { return false }
+            if lines.count >= 2 {
+                let rest = indents.dropFirst()
+                return (rest.max() ?? 0) - (rest.min() ?? 0) < body * 0.6
+            }
+            return first.fontSize < body * 0.93
+        }
+
+        func flush() {
+            if !paragraph.isEmpty {
+                let runs = Self.compact(paragraph)
+                let text = runs.joinedText.trimmingCharacters(in: .whitespaces)
+                if !paragraphIsBullet, isQuote(paragraphLines) {
+                    blocks.append(PositionedBlock(block: .quote(runs), page: paragraphStart.page, y: paragraphStart.y))
+                } else if paragraphLines.count == 1, text.count <= 80, let last = blocks.last,
+                          case .quote(let quoted) = last.block, last.page == paragraphStart.page,
+                          (text.hasPrefix("(") && text.hasSuffix(")")) || text.hasPrefix("—") || text.hasPrefix("–") {
+                    // The source of the quotation, on a line of its own after it.
+                    blocks[blocks.count - 1].block = .quote(Self.compact(quoted + [TextRun(text: "\n")] + runs))
+                } else {
+                    blocks.append(PositionedBlock(block: .paragraph(runs, indented: paragraphIndented),
+                                                  page: paragraphStart.page, y: paragraphStart.y))
+                }
+            }
+            paragraph = []
+            paragraphLines = []
+            previous = nil
+            paragraphIsBlockLines = false
+        }
 
         for page in pages {
             for image in imagesByPage[page] ?? [] {
@@ -552,8 +578,9 @@ public struct LayoutAnalyzer {
                     continue
                 }
 
+                let next = index + 1 < pageLines.count ? pageLines[index + 1] : nil
                 if options.detectHeadings, let size = headingSize(line, text: text, gapBefore: gapBefore,
-                                                                    gapAfter: gapAfter, metrics: m) {
+                                                                    gapAfter: gapAfter, next: next, metrics: m) {
                     flush()
                     if var last = blocks.last, let lastSize = last.headingSize, abs(lastSize - size) < 0.6,
                        last.page == page, case .heading(let level, let runs) = last.block,
@@ -581,6 +608,14 @@ public struct LayoutAnalyzer {
                 } else if previous != nil, paragraphIsBullet, line.x < paragraphStartX - body * 0.3 {
                     // Text back out at the margin: the list is over.
                     startsNew = true
+                } else if previous != nil, paragraphLines.count >= 2, isQuote(paragraphLines),
+                          m.indent(of: line) < body * 0.4 {
+                    // Text back out at the margin: the quotation is over.
+                    startsNew = true
+                } else if let p = previous, p.page != line.page, paragraphLines.count >= 2, isQuote(paragraphLines),
+                          abs(m.indent(of: line) - m.indent(of: p)) < body * 0.6 {
+                    // A quotation carrying on over the page.
+                    startsNew = false
                 } else if let p = previous {
                     startsNew = false
                     let colWidth = m.columnWidth(page: p.page)
@@ -637,10 +672,12 @@ public struct LayoutAnalyzer {
                     paragraphStart = (line.page, line.y)
                     paragraphIsBullet = Self.startsWithBullet(line.text)
                     paragraphStartX = line.x
+                    paragraphLines = [line]
                     previous = line
                     paragraphIsBlockLines = false
                     continue
                 }
+                paragraphLines.append(line)
 
                 if joinWithBreak {
                     paragraph.append(TextRun(text: "\n"))
@@ -672,7 +709,7 @@ public struct LayoutAnalyzer {
     /// typeface, with extra space above. The size returned ranks them (and so
     /// their heading level) below bigger headings.
     func headingSize(_ line: TextLine, text: String, gapBefore: Double, gapAfter: Double,
-                     metrics m: PageMetrics) -> Double? {
+                     next: TextLine? = nil, metrics m: PageMetrics) -> Double? {
         let body = m.bodySize
         guard text.count <= 160, text.contains(where: \.isLetter), !Self.startsWithBullet(text) else { return nil }
         if line.fontSize >= body * 1.18 {
@@ -689,6 +726,10 @@ public struct LayoutAnalyzer {
         // when they open a page), and set differently from the text.
         guard text.count <= 90, let last = text.last, !".,;:".contains(last),
               spaceAbove || (gapBefore == .infinity && spaceBelow) else { return nil }
+        // A sentence that carries straight on into a lower-case line isn't a heading.
+        if let next, !spaceBelow, next.text.drop(while: { !$0.isLetter }).first?.isLowercase == true {
+            return nil
+        }
         if line.fontSize >= body * 1.08 {
             return line.fontSize
         }

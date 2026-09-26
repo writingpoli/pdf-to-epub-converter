@@ -98,7 +98,7 @@ public enum PDFToEPUBConverter {
 
         let words = chapters.flatMap(\.blocks).reduce(0) { total, block in
             switch block {
-            case .paragraph(let runs, _), .heading(_, let runs):
+            case .paragraph(let runs, _), .quote(let runs), .heading(_, let runs):
                 return total + runs.map(\.text).joined().split(whereSeparator: \.isWhitespace).count
             default:
                 return total

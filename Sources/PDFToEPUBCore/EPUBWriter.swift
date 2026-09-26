@@ -110,6 +110,9 @@ public struct EPUBWriter {
                     let cls = previousWasParagraph ? "" : " class=\"noindent\""
                     body += "<p\(idAttribute())\(cls)>\(inline(runs, targets: targets, file: fileName))</p>\n"
                     previousWasParagraph = true
+                case .quote(let runs):
+                    body += "<blockquote\(idAttribute())><p>\(inline(runs, targets: targets, file: fileName))</p></blockquote>\n"
+                    previousWasParagraph = false
                 case .sceneBreak:
                     body += "<hr\(idAttribute()) class=\"scene\"/>\n"
                     previousWasParagraph = false
@@ -160,7 +163,7 @@ public struct EPUBWriter {
         for block in blocks {
             let blockSize: Int
             switch block {
-            case .heading(_, let runs), .paragraph(let runs, _), .footnote(_, let runs):
+            case .heading(_, let runs), .paragraph(let runs, _), .quote(let runs), .footnote(_, let runs):
                 blockSize = runs.reduce(0) { $0 + $1.text.count }
             case .sceneBreak, .anchor: blockSize = 0
             case .image: blockSize = 500
@@ -422,6 +425,10 @@ public struct EPUBWriter {
       padding-left: 1.4em;
     }
     ul.bullets li { margin: 0.2em 0; }
+    blockquote {
+      margin: 0.8em 1.5em;
+    }
+    blockquote p { text-indent: 0; }
     figure.page {
       margin: 1em 0;
       text-align: center;
