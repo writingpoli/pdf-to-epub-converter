@@ -55,8 +55,10 @@ final class PDFFontMap {
         CGPDFContentStreamRelease(stream)
         CGPDFOperatorTableRelease(table)
 
-        spans = state.spans.map { span in
+        spans = state.spans.compactMap { span in
             var span = span
+            guard span.x0.isFinite, span.x1.isFinite, span.baseline.isFinite, span.size.isFinite,
+                  span.size > 0, abs(span.baseline) < 100_000 else { return nil }
             if span.x1 < span.x0 { swap(&span.x0, &span.x1) }
             return span
         }
@@ -68,6 +70,7 @@ final class PDFFontMap {
     /// The span of text drawn at a point on the page, if any.
     func span(at point: CGPoint) -> Span? {
         let y = Double(point.y), x = Double(point.x)
+        guard x.isFinite, y.isFinite, abs(y) < 100_000 else { return nil }
         let key = Int((y / Self.bucketHeight).rounded(.down))
         var best: Span?
         var bestDistance = Double.infinity
@@ -182,7 +185,7 @@ final class PDFFontMap {
         }
         CGPDFOperatorTableSetCallback(table, "Tr") { scanner, info in
             guard let s = PDFFontMap.state(info), let v = PDFFontMap.pop(scanner) else { return }
-            s.text.renderMode = Int(v)
+            s.text.renderMode = v.isFinite ? Int(v) : 0
         }
         CGPDFOperatorTableSetCallback(table, "Tf") { scanner, info in
             guard let s = PDFFontMap.state(info) else { return }

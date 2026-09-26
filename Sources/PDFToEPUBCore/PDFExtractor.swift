@@ -200,6 +200,34 @@ public final class PDFExtractor {
         }
         guard start != NSNotFound else { return nil }
 
+        // PDFKit's text and its character positions don't always count
+        // characters the same way (line breaks can be counted differently),
+        // so line the two up: the right offset puts the line's first and last
+        // characters at the line's edges.
+        func usable(_ r: CGRect) -> Bool {
+            !r.isNull && !r.isInfinite && r.minX.isFinite && r.minY.isFinite && (r.width > 0 || r.height > 0)
+        }
+        let lastInk = (0..<line.length).last { k in
+            let unit = line.character(at: k)
+            return unit != 32 && unit != 9 && unit != 0xA0
+        } ?? line.length - 1
+        var bestOffset: Int?
+        var bestScore = CGFloat.infinity
+        for offset in -8...8 {
+            let first = start + offset, last = start + offset + lastInk
+            guard first >= 0 else { continue }
+            let a = page.characterBounds(at: first), b = page.characterBounds(at: last)
+            guard usable(a), usable(b) else { continue }
+            let score = abs(a.minX - bounds.minX) + abs(b.maxX - bounds.maxX)
+                + abs(a.midY - bounds.midY) + abs(b.midY - bounds.midY)
+            if score < bestScore {
+                bestScore = score
+                bestOffset = offset
+            }
+        }
+        guard let offset = bestOffset, bestScore < max(4, bounds.height) else { return nil }
+        start += offset
+
         struct Style: Equatable {
             var bold: Bool
             var italic: Bool
@@ -215,7 +243,7 @@ public final class PDFExtractor {
             }
             letters += 1
             let r = page.characterBounds(at: start + k)
-            let span = r.isEmpty && r.origin == .zero ? nil : map.span(at: CGPoint(x: r.midX, y: r.midY))
+            let span = usable(r) ? map.span(at: CGPoint(x: r.midX, y: r.midY)) : nil
             if span != nil { matched += 1 }
             spans.append(span)
         }
