@@ -187,9 +187,11 @@ public final class PDFExtractor {
 
         // Where the line sits in the page's text, to ask for each character's position.
         let characterCount = page.numberOfCharacters
-        let hint = page.characterIndex(at: CGPoint(x: bounds.minX + 1, y: bounds.midY))
+        // PDFKit answers NSNotFound (Int.max) when no character is at the point.
+        let rawHint = page.characterIndex(at: CGPoint(x: bounds.minX + 1, y: bounds.midY))
+        let hint = rawHint >= 0 && rawHint < pageText.length ? rawHint : -1
         var start = NSNotFound
-        if hint >= 0, hint + line.length <= pageText.length,
+        if hint >= 0, line.length <= pageText.length - hint,
            pageText.substring(with: NSRange(location: hint, length: line.length)) == line as String {
             start = hint
         } else {

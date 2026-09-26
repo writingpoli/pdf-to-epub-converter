@@ -185,7 +185,7 @@ final class PDFFontMap {
         }
         CGPDFOperatorTableSetCallback(table, "Tr") { scanner, info in
             guard let s = PDFFontMap.state(info), let v = PDFFontMap.pop(scanner) else { return }
-            s.text.renderMode = v.isFinite ? Int(v) : 0
+            s.text.renderMode = PDFFontMap.integer(v) ?? 0
         }
         CGPDFOperatorTableSetCallback(table, "Tf") { scanner, info in
             guard let s = PDFFontMap.state(info) else { return }
@@ -351,6 +351,11 @@ final class PDFFontMap {
         return String(cString: value)
     }
 
+    /// A whole number from a PDF value, or nil for nonsense (a damaged file).
+    static func integer(_ value: Double) -> Int? {
+        value.isFinite && abs(value) < 1_000_000_000 ? Int(value) : nil
+    }
+
     private static func number(_ dictionary: CGPDFDictionaryRef, _ key: String) -> Double? {
         var value: CGPDFReal = 0
         return CGPDFDictionaryGetNumber(dictionary, key, &value) ? Double(value) : nil
@@ -374,7 +379,7 @@ final class PDFFontMap {
                 CGPDFDictionaryGetDictionary(cidFont, "FontDescriptor", &descriptor)
             }
         } else {
-            let first = Int(number(dictionary, "FirstChar") ?? 0)
+            let first = integer(number(dictionary, "FirstChar") ?? 0) ?? 0
             var array: CGPDFArrayRef?
             if CGPDFDictionaryGetArray(dictionary, "Widths", &array), let array {
                 for i in 0..<CGPDFArrayGetCount(array) {
@@ -389,7 +394,7 @@ final class PDFFontMap {
 
         var (bold, italic) = FontStyle.parse(baseName)
         if let descriptor {
-            let flags = Int(number(descriptor, "Flags") ?? 0)
+            let flags = integer(number(descriptor, "Flags") ?? 0) ?? 0
             if flags & 64 != 0 { italic = true }
             if flags & 262_144 != 0 { bold = true }
             if let angle = number(descriptor, "ItalicAngle"), abs(angle) > 4 { italic = true }
@@ -405,7 +410,7 @@ final class PDFFontMap {
         var i = 0
         while i < count {
             var first: CGPDFInteger = 0
-            guard CGPDFArrayGetInteger(array, i, &first) else { break }
+            guard CGPDFArrayGetInteger(array, i, &first), (0..<16_777_216).contains(first) else { break }
             var list: CGPDFArrayRef?
             if CGPDFArrayGetArray(array, i + 1, &list), let list {
                 for k in 0..<CGPDFArrayGetCount(list) {
@@ -417,7 +422,7 @@ final class PDFFontMap {
                 var last: CGPDFInteger = 0
                 var v: CGPDFReal = 0
                 guard CGPDFArrayGetInteger(array, i + 1, &last), CGPDFArrayGetNumber(array, i + 2, &v) else { break }
-                if last >= first && last - first < 65_536 {
+                if (first..<first + 65_536).contains(last) {
                     for code in first...last { widths[code] = Double(v) }
                 }
                 i += 3
