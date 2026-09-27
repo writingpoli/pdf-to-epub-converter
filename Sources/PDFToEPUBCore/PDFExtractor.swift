@@ -224,7 +224,8 @@ public final class PDFExtractor {
     /// it from its place in the sequence.
     func addMissingMarkers(to runs: inout [TextRun], bounds: CGRect, size: Double, map: PDFFontMap,
                            covered: Set<Int>, position: (PDFFontMap.Span) -> Int?) {
-        let drawn = map.spansAlong(line: bounds)
+        // A marker PDFKit left out at the end of a line lies past the line's box.
+        let drawn = map.spansAlong(line: bounds, reachRight: size * 1.2)
         var baselines: [Double: Int] = [:]
         for span in drawn where abs(span.size - size) < 0.5 { baselines[span.baseline.rounded(), default: 0] += span.characters }
         guard let baseline = baselines.max(by: { $0.value < $1.value })?.key else { return }

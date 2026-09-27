@@ -25,6 +25,8 @@ final class ConverterModel: ObservableObject {
     @Published private(set) var phase: Phase = .empty
     @Published private(set) var progress = 0.0
     @Published private(set) var status = ""
+    /// A diagnostic report is being prepared.
+    @Published private(set) var diagnosing = false
 
     struct Settings {
         var includeCover = true
@@ -140,14 +142,20 @@ final class ConverterModel: ObservableObject {
         guard alert.runModal() == .alertFirstButtonReturn,
               let page = Int(field.stringValue.trimmingCharacters(in: .whitespaces)) else { return }
 
-        let report = Diagnostics.report(for: inputURL, page: page)
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(report, forType: .string)
-
-        let done = NSAlert()
-        done.messageText = "Report copied"
-        done.informativeText = "Paste it into your message to Claude. It's \(report.split(separator: "\n").count) lines long."
-        done.runModal()
+        // The report reads the whole book (for how its notes link up), which takes a while.
+        diagnosing = true
+        Task.detached(priority: .userInitiated) { [weak self] in
+            let report = Diagnostics.report(for: inputURL, page: page)
+            await MainActor.run {
+                self?.diagnosing = false
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString(report, forType: .string)
+                let done = NSAlert()
+                done.messageText = "Report copied"
+                done.informativeText = "Paste it into your message to Claude. It's \(report.split(separator: "\n").count) lines long."
+                done.runModal()
+            }
+        }
     }
 
     // MARK: - Results

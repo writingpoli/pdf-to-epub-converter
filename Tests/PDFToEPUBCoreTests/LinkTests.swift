@@ -358,6 +358,26 @@ extension LinkTests {
         assertLinksResolve(chapters)
     }
 
+    func testNotesReportSummarisesLinks() {
+        var lines: [TextLine] = []
+        lines.append(line("One", page: 0, y: 80, x: 150, width: 120, size: 18))
+        for (k, ref) in [1, 2].enumerated() {
+            lines.append(line([TextRun(text: "A cited sentence number \(k) in chapter one, long enough"),
+                               TextRun(text: "\(ref)", superscript: true)],
+                              page: 0, y: 130 + Double(k) * 14, x: 66))
+        }
+        lines.append(line("Notes", page: 1, y: 80, x: 170, width: 60, size: 18))
+        lines.append(line("1. First note.", page: 1, y: 130, width: 120))
+        lines.append(line("2. Second note.", page: 1, y: 144, width: 120))
+        let chapters = LayoutAnalyzer().analyze(lines: lines)
+        let report = NotesReport.summary(chapters) { $0 }
+        XCTAssertTrue(report.contains("2 linked to endnotes"), report)
+        XCTAssertTrue(report.contains("group 1: notes 1–2 (2)"), report)
+        XCTAssertTrue(report.contains("cited from \"One\" (2 markers)"), report)
+        let trace = NotesReport.trace(marker: "2", after: "number 1 in chapter one, long enough", in: chapters) { $0 }
+        XCTAssertTrue(trace.contains("links to en1-2: \"2. Second note.…\""), trace)
+    }
+
     func testNoteMarkerLinkingBackwardsIsReplacedByItsEndnote() {
         var lines: [TextLine] = [
             line("Contents", page: 0, y: 60, x: 170, width: 80, size: 16),

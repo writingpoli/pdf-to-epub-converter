@@ -41,6 +41,9 @@ final class PDFFontMap {
     }
 
     private(set) var spans: [Span] = []
+    /// Fonts the page uses that couldn't be read (their text is still placed,
+    /// with guessed widths).
+    private(set) var unreadFonts: [String] = []
     private var buckets: [Int: [Int]] = [:]
     private static let bucketHeight = 6.0
 
@@ -57,6 +60,7 @@ final class PDFFontMap {
         CGPDFContentStreamRelease(stream)
         CGPDFOperatorTableRelease(table)
 
+        unreadFonts = state.unreadFonts
         spans = state.spans.compactMap { span in
             var span = span
             guard span.x0.isFinite, span.x1.isFinite, span.baseline.isFinite, span.size.isFinite,
@@ -93,9 +97,9 @@ final class PDFFontMap {
     }
 
     /// The pieces of text drawn along a line (baselines inside its box), left to right.
-    func spansAlong(line bounds: CGRect) -> [Span] {
+    func spansAlong(line bounds: CGRect, reachRight: Double = 1) -> [Span] {
         let low = Double(bounds.minY) - 1, high = Double(bounds.maxY)
-        let left = Double(bounds.minX) - 1, right = Double(bounds.maxX) + 1
+        let left = Double(bounds.minX) - 1, right = Double(bounds.maxX) + reachRight
         guard low.isFinite, high.isFinite, left.isFinite, right.isFinite, abs(low) < 100_000, abs(high) < 100_000
         else { return [] }
         var found: [Span] = []
@@ -141,6 +145,7 @@ final class PDFFontMap {
         var stack: [(CGAffineTransform, TextState)] = []
         var spans: [Span] = []
         var fonts: [OpaquePointer: FontInfo] = [:]
+        var unreadFonts: [String] = []
         var depth = 0
     }
 
@@ -215,6 +220,12 @@ final class PDFFontMap {
             guard CGPDFScannerPopNumber(scanner, &size), CGPDFScannerPopName(scanner, &name), let name else { return }
             s.text.size = Double(size)
             s.text.font = PDFFontMap.font(named: name, scanner: scanner, state: s)
+            if s.text.font == nil {
+                // Still place its text, so small raised note numbers in it can be found.
+                let label = "unreadable font " + String(cString: name)
+                if !s.unreadFonts.contains(label) { s.unreadFonts.append(label) }
+                s.text.font = FontInfo(name: label, bold: false, italic: false, twoByte: false, widths: [:], defaultWidth: 500)
+            }
         }
         CGPDFOperatorTableSetCallback(table, "Td") { scanner, info in
             guard let s = PDFFontMap.state(info), let ty = PDFFontMap.pop(scanner), let tx = PDFFontMap.pop(scanner) else { return }

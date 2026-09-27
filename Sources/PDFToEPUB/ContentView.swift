@@ -100,8 +100,13 @@ struct ContentView: View {
                         .lineLimit(1)
                         .truncationMode(.middle)
                     Spacer()
+                    if model.diagnosing {
+                        ProgressView().controlSize(.small)
+                        Text("Reading the whole book…").font(.caption).foregroundStyle(.secondary)
+                    }
                     Button("Diagnostics…") { model.copyDiagnostics() }
                         .controlSize(.small)
+                        .disabled(model.diagnosing)
                         .help("Copy a report on how one page reads, to help fix conversion problems")
                     Button("Choose Another…") { model.choosePDF() }
                         .controlSize(.small)

@@ -99,6 +99,21 @@ public enum Diagnostics {
             }
         }
         if markerCount == 0 { out += "  none\n" }
+        // Everything drawn small on the page, to show where note numbers are
+        // when PDFKit's text doesn't have them.
+        let map = PDFFontMap(page: page)
+        var sizeCounts: [Double: Int] = [:]
+        for span in map.spans { sizeCounts[(span.size * 2).rounded() / 2, default: 0] += span.characters }
+        let usual = sizeCounts.max { $0.value < $1.value }?.key ?? 10
+        let small = map.spans.filter { $0.size < usual * 0.85 }
+        out += "Small text drawn on page \(pageNumber) (usual size \(String(format: "%.1f", usual))): "
+        out += "top, left, size, characters, raised, font\n"
+        if small.isEmpty { out += "  none\n" }
+        for span in small.prefix(40) {
+            out += "  \(Int(box.maxY - span.baseline)), \(Int(span.x0 - box.minX)), \(String(format: "%.1f", span.size)), "
+            out += "\(span.characters), \(String(format: "%.1f", span.rise)), \(span.font.name)\n"
+        }
+        if !map.unreadFonts.isEmpty { out += "Fonts this reader couldn't read: \(map.unreadFonts.joined(separator: ", "))\n" }
         out += "Fonts in these pages' drawing instructions (name | characters | read as):\n"
         if extractor.drawnFonts.isEmpty { out += "  none matched\n" }
         for font in extractor.drawnFonts.values.sorted(by: { $0.characters > $1.characters }) {
@@ -118,6 +133,30 @@ public enum Diagnostics {
                 case .anchor: break
                 }
             }
+        }
+        // The whole book, for how its notes were linked.
+        out += "\nEndnotes across the whole book:\n"
+        let whole = PDFExtractor(document: document)
+        if let extracted = try? whole.extract() {
+            let chapters = LayoutAnalyzer().analyze(lines: extracted.lines, pageImages: extracted.pageImages,
+                                                    outline: extracted.outline)
+            out += NotesReport.summary(chapters, mask: mask)
+            out += "Where page \(pageNumber)'s note markers lead:\n"
+            var traced = 0
+            for line in extracted.lines where line.page == pageNumber - 1 {
+                var before = ""
+                for run in line.runs {
+                    if run.superscript {
+                        out += "  ^\(run.text)^ after \"…\(mask(String(before.suffix(14))))\": "
+                        out += NotesReport.trace(marker: run.text, after: before, in: chapters, mask: mask) + "\n"
+                        traced += 1
+                    }
+                    before += run.text
+                }
+            }
+            if traced == 0 { out += "  no markers on this page\n" }
+        } else {
+            out += "  couldn't read the whole book\n"
         }
         return out
     }
