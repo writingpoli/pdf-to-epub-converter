@@ -22,9 +22,6 @@ jobs:
     runs-on: macos-15
     permissions:
       contents: write
-    env:
-      # Print where a crash happened, if one does.
-      SWIFT_BACKTRACE: enable=yes,sanitize=yes,interactive=no
     steps:
       - uses: actions/checkout@v4
 
@@ -32,15 +29,24 @@ jobs:
         run: swift build
 
       - name: Test
+        env:
+          # Print where a crash happened, if one does (only here: other tools warn about it).
+          SWIFT_BACKTRACE: enable=yes,sanitize=yes,interactive=no
         run: swift test
 
       - name: Diagnostic reports for sample pages
+        env:
+          # Print where a crash happened, if one does (only here: other tools warn about it).
+          SWIFT_BACKTRACE: enable=yes,sanitize=yes,interactive=no
         if: always()
         run: |
           swift run pdf2epub Tests/Fixtures/alice-sample.pdf --diagnose 10
           swift run pdf2epub Tests/Fixtures/embedded-fonts.pdf --diagnose 1
 
       - name: Show what PDFKit reads from the note pages
+        env:
+          # Print where a crash happened, if one does (only here: other tools warn about it).
+          SWIFT_BACKTRACE: enable=yes,sanitize=yes,interactive=no
         if: always()
         run: |
           swift run pdf2epub Tests/Fixtures/alice-sample.pdf --dump-lines lines.json --verbose
