@@ -56,8 +56,23 @@ public struct EPUBWriter {
             }
         }
         var targets: [String: String] = [:]   // element id -> file name
+        // Anchors in a row all mean the element after them, which can carry
+        // only one id: the others become aliases of it. (Given ids of their
+        // own, they'd sit on empty elements, and Books would pop up nothing.)
+        var aliases: [String: String] = [:]
         for file in files {
+            var waiting: [String] = []
             for block in file.blocks {
+                switch block {
+                case .anchor(let id):
+                    waiting.append(id)
+                case .footnote(let id, _):
+                    for other in waiting { aliases[other] = id }
+                    waiting = []
+                default:
+                    if let last = waiting.last { for other in waiting.dropLast() { aliases[other] = last } }
+                    waiting = []
+                }
                 switch block {
                 case .anchor(let id), .footnote(let id, _): targets[id] = "\(file.id).xhtml"
                 default: break
@@ -66,6 +81,7 @@ public struct EPUBWriter {
                     if let id = run.id { targets[id] = "\(file.id).xhtml" }
                 }
             }
+            if let last = waiting.last { for other in waiting.dropLast() { aliases[other] = last } }
         }
 
         for file in files {
@@ -98,20 +114,20 @@ public struct EPUBWriter {
                         body += "<ul class=\"bullets\">\n"
                         inList = true
                     }
-                    body += "<li\(idAttribute())>\(inline(items, targets: targets, file: fileName))</li>\n"
+                    body += "<li\(idAttribute())>\(inline(items, targets: targets, aliases: aliases, file: fileName))</li>\n"
                     previousWasParagraph = false
                     continue
                 }
                 switch block {
                 case .heading(let level, let runs):
-                    body += "<h\(level)\(idAttribute())>\(inline(runs, targets: targets, file: fileName))</h\(level)>\n"
+                    body += "<h\(level)\(idAttribute())>\(inline(runs, targets: targets, aliases: aliases, file: fileName))</h\(level)>\n"
                     previousWasParagraph = false
                 case .paragraph(let runs, _):
                     let cls = previousWasParagraph ? "" : " class=\"noindent\""
-                    body += "<p\(idAttribute())\(cls)>\(inline(runs, targets: targets, file: fileName))</p>\n"
+                    body += "<p\(idAttribute())\(cls)>\(inline(runs, targets: targets, aliases: aliases, file: fileName))</p>\n"
                     previousWasParagraph = true
                 case .quote(let runs):
-                    body += "<blockquote\(idAttribute())><p>\(inline(runs, targets: targets, file: fileName))</p></blockquote>\n"
+                    body += "<blockquote\(idAttribute())><p>\(inline(runs, targets: targets, aliases: aliases, file: fileName))</p></blockquote>\n"
                     previousWasParagraph = false
                 case .sceneBreak:
                     body += "<hr\(idAttribute()) class=\"scene\"/>\n"
@@ -121,6 +137,7 @@ public struct EPUBWriter {
                     body += "<figure\(idAttribute()) class=\"page\"><img src=\"../\(src)\" alt=\"\(escape(alt, attribute: true))\"/></figure>\n"
                     previousWasParagraph = false
                 case .anchor(let id):
+                    if aliases[id] != nil { continue }
                     if let waiting = pendingID { body += "<div id=\"\(escape(waiting, attribute: true))\"></div>\n" }
                     pendingID = id
                 case .footnote(let id, let runs):
@@ -128,7 +145,7 @@ public struct EPUBWriter {
                         body += "<div id=\"\(escape(waiting, attribute: true))\"></div>\n"
                         pendingID = nil
                     }
-                    body += "<aside epub:type=\"footnote\" class=\"footnote\" id=\"\(escape(id, attribute: true))\"><p>\(inline(runs, targets: targets, file: fileName))</p></aside>\n"
+                    body += "<aside epub:type=\"footnote\" class=\"footnote\" id=\"\(escape(id, attribute: true))\"><p>\(inline(runs, targets: targets, aliases: aliases, file: fileName))</p></aside>\n"
                     previousWasParagraph = false
                 }
             }
@@ -187,7 +204,8 @@ public struct EPUBWriter {
     /// - Parameters:
     ///   - targets: which file each element id is in; links to other ids are dropped.
     ///   - file: the file being written, so links within it need no file name.
-    func inline(_ runs: [TextRun], targets: [String: String] = [:], file: String = "") -> String {
+    func inline(_ runs: [TextRun], targets: [String: String] = [:], aliases: [String: String] = [:],
+                file: String = "") -> String {
         var out = ""
         for run in runs {
             var text = run.text.split(separator: "\n", omittingEmptySubsequences: false)
@@ -199,7 +217,8 @@ public struct EPUBWriter {
             let idAttribute = run.id.map { " id=\"\(escape($0, attribute: true))\"" } ?? ""
             var href: String?
             switch run.link {
-            case .anchor(let target):
+            case .anchor(let linked):
+                let target = aliases[linked] ?? linked
                 if let targetFile = targets[target] {
                     href = (targetFile == file ? "" : targetFile) + "#" + target
                 }

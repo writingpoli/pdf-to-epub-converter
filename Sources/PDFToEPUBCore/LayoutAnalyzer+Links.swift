@@ -477,14 +477,24 @@ extension LayoutAnalyzer {
             if case .anchor(let id) = link { return !id.hasPrefix("fn") && !notesIDs.contains(id) }
             return false
         }
-        var refs: [Int: [(block: Int, run: Int, number: Int)]] = [:]
+        // Where the PDF's own links from note markers land among the notes.
+        // They often lead only to the page a note is on (so to the first note
+        // there), which says whose notes to look in but not which note.
+        var anchorPosition: [String: Int] = [:]
+        for (i, block) in blocks.enumerated() {
+            if case .anchor(let id) = block { anchorPosition[id] = i }
+        }
+        var refs: [Int: [(block: Int, run: Int, number: Int, hint: Int?)]] = [:]
         for c in 0..<notesIndex {
             for (b, block) in chapters[c].blocks.enumerated() {
-                for (r, run) in (block.runs ?? []).enumerated() where run.superscript && replaceable(run.link) {
+                for (r, run) in (block.runs ?? []).enumerated() where run.superscript {
+                    var hint: Int?
+                    if case .anchor(let id)? = run.link { hint = anchorPosition[id] }
+                    guard hint != nil || replaceable(run.link) else { continue }
                     // "*": a marker recovered from the drawing, its number unknown (0).
                     let text = run.text.trimmingCharacters(in: .whitespaces)
                     if let n = Int(text) ?? (text == "*" ? 0 : nil) {
-                        refs[c, default: []].append((b, r, n))
+                        refs[c, default: []].append((b, r, n, hint))
                     }
                 }
             }
@@ -518,6 +528,19 @@ extension LayoutAnalyzer {
             }
         }
 
+        // Each marker the PDF links into the notes votes for the group holding
+        // the note with its number nearest after where the link lands.
+        var votes: [Int: [Int: Int]] = [:]      // chapter -> group -> votes
+        for c in citing {
+            for ref in refs[c] ?? [] {
+                guard let hint = ref.hint else { continue }
+                guard let landing = notes.first(where: { $0.block >= hint - 1 }) ?? notes.last else { continue }
+                let near = notes.filter { $0.number == ref.number && abs($0.group - landing.group) <= 1 }
+                let note = near.min { abs($0.block - hint) < abs($1.block - hint) } ?? landing
+                votes[c, default: [:]][note.group, default: 0] += 1
+            }
+        }
+
         var chapterForGroup: [Int: Int] = [:]
         if groupCount == 1 {
             chapterForGroup[0] = -1   // numbered straight through the book
@@ -533,6 +556,10 @@ extension LayoutAnalyzer {
                 if key.count >= 4, title == key || (min(title.count, key.count) >= 6 && (title.contains(key) || key.contains(title))) {
                     score += 1
                 }
+                // The PDF's links outweigh everything else.
+                let chapterVotes = votes[citing[k]] ?? [:]
+                let total = chapterVotes.values.reduce(0, +)
+                if total > 0 { score += 3 * Double(chapterVotes[g] ?? 0) / Double(total) }
                 return score
             }
             let k = citing.count
@@ -569,7 +596,7 @@ extension LayoutAnalyzer {
             for c in chaptersToSearch {
                 for ref in refs[c] ?? [] where ref.number == note.number {
                     var runs = chapters[c].blocks[ref.block].runs ?? []
-                    guard ref.run < runs.count, replaceable(runs[ref.run].link) else { continue }
+                    guard ref.run < runs.count, ref.hint != nil || replaceable(runs[ref.run].link) else { continue }
                     runs[ref.run].link = .anchor(id)
                     runs[ref.run].text = "\(note.number)"   // as corrected, or recovered
                     if firstRef { runs[ref.run].id = refID }

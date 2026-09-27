@@ -378,6 +378,35 @@ extension LinkTests {
         XCTAssertTrue(trace.contains("links to en1-2: \"2. Second note.…\""), trace)
     }
 
+    /// The PDF's links from markers often lead only to the page a note is
+    /// on. They say whose notes to look in; the number says which note.
+    func testPageLinksFromMarkersFindTheNoteByNumber() {
+        var lines: [TextLine] = []
+        func chapter(_ title: String, page: Int, refs: [Int]) {
+            lines.append(line(title, page: page, y: 80, x: 150, width: 120, size: 18))
+            for (k, ref) in refs.enumerated() {
+                lines.append(line([TextRun(text: "A cited sentence number \(k) in \(title), long enough"),
+                                   TextRun(text: "\(ref)", superscript: true, link: .page(4, y: nil))],
+                                  page: page, y: 130 + Double(k) * 14, x: 66))
+            }
+        }
+        chapter("Alpha", page: 0, refs: [1, 2])
+        chapter("Beta", page: 1, refs: [1, 2, 3])
+        lines.append(line("Notes", page: 3, y: 80, x: 170, width: 60, size: 18))
+        lines.append(line("Unmatched Name", page: 3, y: 120, x: 50, width: 90, size: 13))
+        lines.append(line("1. First note, first group.", page: 3, y: 150, width: 170))
+        lines.append(line("2. Second note, first group.", page: 3, y: 164, width: 170))
+        lines.append(line("Another Name", page: 4, y: 60, x: 50, width: 80, size: 13))
+        lines.append(line("1. First note, second group.", page: 4, y: 90, width: 170))
+        lines.append(line("2. Second note, second group.", page: 4, y: 104, width: 170))
+        lines.append(line("3. Third note, second group.", page: 4, y: 118, width: 170))
+
+        let chapters = LayoutAnalyzer().analyze(lines: lines)
+        let beta = allRuns([chapters[1]]).filter(\.superscript)
+        XCTAssertEqual(beta.map(\.link), [.anchor("en2-1"), .anchor("en2-2"), .anchor("en2-3")])
+        assertLinksResolve(chapters)
+    }
+
     func testNoteMarkerLinkingBackwardsIsReplacedByItsEndnote() {
         var lines: [TextLine] = [
             line("Contents", page: 0, y: 60, x: 170, width: 80, size: 16),
@@ -552,5 +581,24 @@ final class BlockQuoteTests: XCTestCase {
         body(3)
         let blocks = LayoutAnalyzer().analyze(lines: lines).flatMap(\.blocks)
         XCTAssertFalse(blocks.contains { if case .heading = $0 { return true } else { return false } }, "\(blocks)")
+    }
+}
+
+extension EPUBWriterTests {
+    func testAnchorsInARowShareTheElementAfterThem() throws {
+        #if canImport(Compression)
+        throw XCTSkip("Entries are deflated on Apple platforms.")
+        #else
+        let book = Book(metadata: BookMetadata(title: "T", author: "A"), cover: nil, chapters: [
+            Chapter(title: "One", blocks: [.paragraph([TextRun(text: "See"), TextRun(text: "1", superscript: true, link: .anchor("p4-1"))], indented: false)]),
+            Chapter(title: "Notes", blocks: [.anchor("p4-1"), .anchor("en1-1"), .paragraph([TextRun(text: "1. The note.")], indented: false)]),
+        ])
+        let data = EPUBWriter().makeEPUB(book)
+        let one = try XCTUnwrap(storedText(data, "OEBPS/text/ch001.xhtml"))
+        let notes = try XCTUnwrap(storedText(data, "OEBPS/text/ch002.xhtml"))
+        XCTAssertTrue(one.contains("href=\"ch002.xhtml#en1-1\""), one)
+        XCTAssertTrue(notes.contains("<p id=\"en1-1\""), notes)
+        XCTAssertFalse(notes.contains("<div id="), notes)
+        #endif
     }
 }
